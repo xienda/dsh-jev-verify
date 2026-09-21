@@ -1,0 +1,80 @@
+{
+  "name": "dsh-jev-verify",
+  "version": "0.1.0",
+  "description": "Jev (TypeSafe System One decision model) for DeepSeek Harness: typed decision primitives (choice/score/noul) as agent tools plus an online verification benchmark (jev_verify). Honest by design: real API calls only, measured latency/accuracy, no mock fallback.",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./cases": {
+      "types": "./lib/types/cases.d.ts",
+      "default": "./lib/cases.js"
+    },
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "lib",
+    "bench",
+    "docs",
+    "examples",
+    "README.md",
+    "README.zh.md",
+    "LICENSE",
+    "cordis.patch.yml"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xienda/dsh-jev-verify.git"
+  },
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "jev",
+    "typesafe",
+    "system-one",
+    "decision-model",
+    "verification",
+    "benchmark",
+    "classifier",
+    "guardrails"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0",
+    "dsh": ">=0.1.5-rc.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.1 <5"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "bench": "node bench/bench.mjs",
+    "check": "node --check lib/index.js && node --check lib/cases.js && node --check bench/bench.mjs",
+    "test": "node --test test/"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "homepage": "https://github.com/xienda/dsh-jev-verify"
+}
