@@ -80,7 +80,7 @@ try {
   mode = "all-correct";
   const ok = await verifyAgainstLiveApi({ ...baseOptions, ...key });
   assert.equal(ok.accuracy, 1, "expected 100% accuracy, got " + ok.accuracy);
-  assert.equal(ok.questionCount, 25, "expected 25 questions");
+  assert.equal(ok.questionCount, 27, "expected 27 questions");
   assert.ok(ok.std.medianMs > 0, "latency measured");
   assert.ok(ok.cost.totalInputTokens > 0, "tokens recorded");
   assert.equal(ok.mislabeled.length, 0, "no mislabels on perfect mock");
@@ -94,10 +94,10 @@ try {
   // 2. flipped noul answers: accuracy must drop, mislabels reported
   mode = "flip-noul";
   const bad = await verifyAgainstLiveApi({ ...baseOptions, ...key });
-  const expectedWrong = 10; // 10 noul questions flipped
-  const expectedAccuracy = (25 - expectedWrong) / 25;
+  const expectedWrong = 12; // 12 noul questions flipped (incl. 2 guard cases)
+  const expectedAccuracy = (27 - expectedWrong) / 27;
   assert.ok(Math.abs(bad.accuracy - expectedAccuracy) < 1e-9, "accuracy should be " + expectedAccuracy + ", got " + bad.accuracy);
-  assert.equal(bad.mislabeled.length, expectedWrong, "10 mislabeled reported");
+  assert.equal(bad.mislabeled.length, expectedWrong, "mislabeled count");
   assert.ok(bad.mislabeled.every((m) => m.ok === false), "mislabels flagged ok=false");
   console.log("PASS 2: flipped answers -> accuracy drops to " + bad.accuracy.toFixed(2) + ", 10 mislabels listed");
 
