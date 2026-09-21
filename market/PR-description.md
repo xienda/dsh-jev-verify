@@ -44,3 +44,8 @@ Jev (TypeSafe AI, launched 2026-09-15) is a fast decision model for agent worklo
 
 1. **自动（PAT）**：本机已准备好 `git dsh-jev-verify` 仓库与分支，提供 PAT 后一条命令推送并开 PR。
 2. **手动**：直接把上面的 Markdown 粘贴到 GitHub 网页新建 PR，或把 [market/list-entry.md](market/list-entry.md) 的内容追加到清单文件。
+## 实际状态（2026-09-21）
+
+- ✅ PR 已提交：https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/5577（head: xienda:add-dsh-jev-verify，含 README.md 与 README.zh.md 两条收录）
+- ✅ 插件仓库：https://github.com/xienda/dsh-jev-verify（代码已上传，含 dsh.bundle manifest）
+- ⏳ npm 发布待用户登录后执行（市场安装会先回退到 GitHub 源码安装）
