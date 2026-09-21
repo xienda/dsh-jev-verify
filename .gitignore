@@ -1,0 +1,4 @@
+node_modules/
+*.tgz
+bench/results/
+package-lock.json
