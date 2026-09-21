@@ -1,6 +1,6 @@
 {
   "name": "dsh-jev-verify",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Jev (TypeSafe System One decision model) for DeepSeek Harness: typed decision primitives (choice/score/noul) as agent tools plus an online verification benchmark (jev_verify). Honest by design: real API calls only, measured latency/accuracy, no mock fallback.",
   "type": "module",
   "main": "lib/index.js",
