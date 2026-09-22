@@ -1,0 +1,80 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Jev Dashboard</title>
+<style>:root{--bg:#0d1117;--card:#161b22;--line:#30363d;--txt:#e6edf3;--dim:#8b949e;--acc:#3fb950;--warn:#d29922;--bad:#f85149;--blue:#58a6ff}
+body{background:var(--bg);color:var(--txt);font:14px/1.55 -apple-system,'Segoe UI',Roboto,'Microsoft YaHei',sans-serif;margin:0 auto;padding:20px;max-width:1180px}
+h1{font-size:20px;margin:4px 0 2px}h2{font-size:15px;margin:22px 0 8px;color:var(--blue)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.card .k{font-size:12px;color:var(--dim)}.card .v{font-size:19px;font-weight:650;margin-top:2px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--dim);font-weight:500}
+.ok{color:var(--acc)}.warn{color:var(--warn)}.bad{color:var(--bad)}.dim{color:var(--dim)}
+textarea{width:100%;background:#010409;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px;font:12px/1.5 Consolas,Menlo,monospace;box-sizing:border-box;resize:vertical}
+button{background:var(--acc);color:#04140a;border:0;border-radius:8px;padding:8px 18px;font-weight:650;cursor:pointer;margin-top:8px}button:hover{filter:brightness(1.1)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+svg{width:100%;height:90px;background:var(--card);border:1px solid var(--line);border-radius:10px}
+polyline{fill:none;stroke:var(--blue);stroke-width:1.6}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;background:var(--card);border:1px solid var(--line);margin:2px 4px 2px 0}
+.verdict{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:10px;white-space:pre-wrap;font:12.5px/1.6 Consolas,Menlo,monospace}
+.trywait{color:var(--warn)}
+@media(max-width:760px){.grid2{grid-template-columns:1fr}}
+</style></head><body>
+<h1>Jev <span class="dim">System One · 决策仪表盘</span></h1>
+<div id="status" class="dim">加载中…</div>
+<div class="cards" id="cards"></div>
+<h2>决策流（最近）</h2>
+<table><thead><tr><th>时间</th><th>内容</th><th>答案 / 置信度</th><th>延迟</th><th>成本</th></tr></thead><tbody id="roll"></tbody></table>
+<h2>延迟趋势（最近 60 次调用）</h2>
+<svg id="lat" preserveAspectRatio="none" viewBox="0 0 600 90"></svg>
+<div class="grid2"><div><h2>问题类型分布</h2><div id="types"></div></div><div><h2>置信度</h2><div id="conf"></div></div></div>
+<h2>护栏事件</h2>
+<table><thead><tr><th>时间</th><th>动作</th><th>说明</th></tr></thead><tbody id="guards"></tbody></table>
+<h2>快速试一次（Playground 风格）</h2>
+<div class="grid2"><div><textarea id="state" rows="4" placeholder="state，例如：I was double-charged for my subscription and I want a refund."></textarea></div>
+<div><textarea id="qs" rows="4" placeholder='questions JSON，例如 [{"name":"is_urgent","type":"noul","instructions":"The message conveys urgency"}] '></textarea></div></div>
+<button onclick="tryOnce()">用 Jev 判定</button>
+<div id="tryout"></div>
+<script>
+function el(id){return document.getElementById(id)}
+function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c]})}
+function fmtMoney(u){return (u==null?'-':'$'+(Math.round(u*1e6))+'µ')}
+function fmtQ(questions){if(!questions||!questions.length)return '-';return questions.map(function(q){return q.name+'='+esc(String(q.value==null?'?':q.value))+(q.confidence!=null?' ('+Math.round(q.confidence*100)+'%)':'')}).join('<br>')}
+function typePills(counts){var keys=Object.keys(counts||{});if(!keys.length)return '<span class="dim">暂无</span>';return keys.map(function(k){return '<span class="pill">'+esc(k)+' × '+counts[k]+'</span>'}).join('')}
+function render(d){
+var s=d.status;var st=[];
+st.push('model: '+esc(s.model)+' · '+esc(s.endpoint)+(s.keyConfigured?'':' · <span class="bad">无 API Key</span>'));
+st.push('护栏: '+(s.guardActive?'<span class="ok">开启</span>':'<span class="dim">关闭</span>')+' · 阈值 '+(s.guardThreshold==null?'-':s.guardThreshold)+' · 预算剩余 '+(s.budgetRemaining==null?'-':s.budgetRemaining));
+st.push('更新于 '+esc(s.updatedAt));
+el('status').innerHTML=st.join(' · ');
+var c=d.summary||{};var cards=[['调用次数',String(c.calls==null?0:c.calls)],['中位延迟',(c.medianLatencyMs==null?'-':c.medianLatencyMs+' ms')],['平均置信度',(c.avgConfidence==null?'-':Math.round(c.avgConfidence*100)+'%')],['累计 tokens',String(c.totalInputTokens==null?0:c.totalInputTokens)],['累计成本',fmtMoney(c.totalCostUs)],['护栏拦截',String(c.guardDenials==null?0:c.guardDenials)],['护栏建议',String(c.guardAdvisories==null?0:c.guardAdvisories)],['verify',String(c.verifies==null?0:c.verifies)]];
+el('cards').innerHTML=cards.map(function(x){return '<div class="card"><div class="k">'+esc(x[0])+'</div><div class="v">'+x[1]+'</div></div>'}).join('');
+el('roll').innerHTML=(d.roll||[]).map(function(e){
+if(e.kind==='decision'){return '<tr><td class="dim">'+esc(e.ts.slice(11,19))+'</td><td>'+esc((e.stateHead||'').slice(0,60))+'</td><td>'+fmtQ(e.questions)+'</td><td>'+esc(e.latencyMs+' ms')+'</td><td>'+fmtMoney(e.costUs)+'</td></tr>';}
+if(e.kind==='verify'){return '<tr><td class="dim">'+esc(e.ts.slice(11,19))+'</td><td class="ok">'+esc(e.summaryText||'verified')+'</td><td colspan="3"></td></tr>';}
+return '';}).join('')||'<tr><td colspan="5" class="dim">尚无记录 — 让 agent 调用 jev_decision，或在下方「快速试一次」</td></tr>';
+el('guards').innerHTML=(d.guards||[]).map(function(g){var cls=g.action==='deny'?'bad':'warn';return '<tr><td class="dim">'+esc(g.ts.slice(11,19))+'</td><td class="'+cls+'">'+esc(g.action)+'</td><td>'+esc(g.detail||'')+'</td></tr>'}).join('')||'<tr><td colspan="3" class="dim">暂无护栏事件</td></tr>';
+var lats=(d.latencySeries||[]).slice(-60);
+if(lats.length>1){var max=Math.max.apply(null,lats);var min=Math.min.apply(null,lats);var span=(max-min)||1;
+var pts=lats.map(function(v,i){return ((i/(lats.length-1))*598).toFixed(1)+','+(84-((v-min)/span)*80).toFixed(1)}).join(' ');
+el('lat').innerHTML='<polyline points="'+pts+'"></polyline>';}else{el('lat').innerHTML='';}
+el('types').innerHTML=typePills(c.typeCounts);
+el('conf').innerHTML='<span class="dim">'+(c.avgConfidence==null?'暂无':Math.round(c.avgConfidence*100)+'% 平均置信度')+'</span>';
+}
+function refresh(){fetch('./api',{cache:'no-store'}).then(function(r){return r.json()}).then(render).catch(function(){})}
+function tryOnce(){
+var st=el('state').value;var qq=el('qs').value.trim();var out=el('tryout');
+if(!st||!qq){out.innerHTML='<div class="bad">请填写 state 与 questions</div>';return;}
+var questions;try{questions=JSON.parse(qq)}catch(e){out.innerHTML='<div class="bad">questions 不是合法 JSON</div>';return;}
+out.innerHTML='<div class="trywait">Jev 判定中…</div>';
+fetch('./api/try',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:st,questions:questions})})
+.then(function(r){return r.json()}).then(function(d){
+if(d.error){out.innerHTML='<div class="bad">'+esc(d.error)+'</div>';return;}
+var lines=['model '+esc(d.model)+' · '+d.latencyMs+' ms · 约 '+fmtMoney(d.costUs)];
+for(var k in d.answers){if(!d.answers.hasOwnProperty(k))continue;var a=d.answers[k];if(!a)continue;
+var v=a.type==='noul'?(a.noul+' (noul)'):(a.type==='choice'?('choice='+a.choice):('score='+a.score));
+lines.push(k+': '+v+(a.confidence!=null?'  conf='+Math.round(a.confidence*100)+'%':''));}
+out.innerHTML='<div class="verdict">'+esc(lines.join('\n'))+'</div>';
+refresh();}).catch(function(){out.innerHTML='<div class="bad">请求失败</div>'})
+}
+refresh();setInterval(refresh,5000);
+</script></body></html>
