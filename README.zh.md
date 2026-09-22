@@ -92,6 +92,16 @@ dsh plugin --profile web add dsh-jev-verify
 
 两者都优雅降级，且全部计数可由 \`jev_guard_status\` 审计。实测演示（2026-09-21）：\`remove-item -Recurse …\` 被确定性规则拦截；"permanently wipe all staging data and delete every row from every table" 被 **Jev 以 91% 置信度**（阈值 0.8）在执行前拦截。
 
+## 可视化仪表盘
+
+插件在 **web profile**（dsh web）中运行时，会直接在 web 服务器上挂载本地仪表盘——不额外开服务、数据不出本机：
+
+- **http://127.0.0.1:3080/jev** — 深色主题页面（Playground 风格）：实时决策流（答案+置信度）、延迟趋势 SVG、问题类型/置信度汇总、护栏事件流、累计统计。
+- **GET /jev/api** — 机器可读快照（与页面同源数据）。
+- **POST /jev/api/try** — 浏览器里直接试一次：粘贴 `state` + questions JSON，立即返回 Jev 判定、延迟与成本。
+
+Agent 的所有调用（`jev_decision` / `jev_verify`）与护栏事件都会记入账本（内存 + `$DSH_HOME/jev-roll.jsonl`），页面每 5 秒轮询。可用 `dashboard.enabled` / `dashboard.basePath`（默认 `/jev`）控制。
+
 ## 验证（实测、带日期）
 
 方法学与最新实测结果见 [docs/verification.md](docs/verification.md)。
