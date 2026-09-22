@@ -124,6 +124,22 @@ deterministic rule, while "permanently wipe all staging data and delete every
 row from every table" was intercepted by **Jev at 91% confidence** (threshold
 0.8) before any command ran.
 
+## Dashboard (visualization)
+
+When the plugin runs in the **web profile** (dsh web), a local dashboard is
+mounted on the web server — no extra service, nothing leaves the machine:
+
+- **http://127.0.0.1:3080/jev** — dark-theme page (Playground-style) with a live
+  decision stream (answers + confidence), latency trend SVG, question-type and
+  confidence summaries, guard event feed, and totals.
+- **GET /jev/api** — machine-readable snapshot (same data as the page).
+- **POST /jev/api/try** — one-shot playground evaluation right in the browser:
+  paste a `state` + questions JSON, get Jev's verdict, latency and cost.
+
+All agent calls (`jev_decision` / `jev_verify`) and guard events are recorded
+into the roll (memory + `$DSH_HOME/jev-roll.jsonl`); the page polls every 5 s.
+Control via `dashboard.enabled` / `dashboard.basePath` (default `/jev`).
+
 ## Verification (measured, dated)
 
 See [docs/verification.md](docs/verification.md) for methodology and the latest
