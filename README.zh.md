@@ -92,15 +92,16 @@ dsh plugin --profile web add dsh-jev-verify
 
 两者都优雅降级，且全部计数可由 \`jev_guard_status\` 审计。实测演示（2026-09-21）：\`remove-item -Recurse …\` 被确定性规则拦截；"permanently wipe all staging data and delete every row from every table" 被 **Jev 以 91% 置信度**（阈值 0.8）在执行前拦截。
 
-## 可视化仪表盘
+## 运行可视化（不另开页面）
 
-插件在 **web profile**（dsh web）中运行时，会直接在 web 服务器上挂载本地仪表盘——不额外开服务、数据不出本机：
+可视化**直接在对话里看**，不再需要单独网页：
 
-- **http://127.0.0.1:3080/jev** — 深色主题页面（Playground 风格）：实时决策流（答案+置信度）、延迟趋势 SVG、问题类型/置信度汇总、护栏事件流、累计统计。
-- **GET /jev/api** — 机器可读快照（与页面同源数据）。
-- **POST /jev/api/try** — 浏览器里直接试一次：粘贴 `state` + questions JSON，立即返回 Jev 判定、延迟与成本。
+- `jev_overview` — 随时让 Agent 执行：在对话内渲染紧凑决策看板（最近答案+置信度、中位/p95 延迟、累计统计、护栏事件、Key/护栏状态）。
+- `jev_verify` — 线上真实基准（准确率/延迟/校准）。
+- `jev_guard_status` — 护栏计数与阈值审计。
 
-Agent 的所有调用（`jev_decision` / `jev_verify`）与护栏事件都会记入账本（内存 + `$DSH_HOME/jev-roll.jsonl`），页面每 5 秒轮询。可用 `dashboard.enabled` / `dashboard.basePath`（默认 `/jev`）控制。
+需要独立网页版时可选开启：`dashboard.enabled: true` 后访问 http://127.0.0.1:3080/jev。
+所有决策/验证/护栏事件还会追加到 `$DSH_HOME/jev-roll.jsonl` 供外部工具使用。
 
 ## 验证（实测、带日期）
 
