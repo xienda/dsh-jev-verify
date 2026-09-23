@@ -1,0 +1,74 @@
+{
+ "args": {
+  "state": "Customer writes: 'Your app deleted my entire project folder without asking. This is unacceptable, I want this escalated to a manager immediately.'",
+  "model": "jev-latest",
+  "questions": {
+   "is_urgent": {
+    "type": "noul",
+    "instructions": "The message conveys urgency"
+   },
+   "sentiment": {
+    "type": "choice",
+    "instructions": "Overall sentiment",
+    "criteria": {
+     "positive": "satisfied",
+     "neutral": "factual",
+     "negative": "frustrated or angry"
+    }
+   },
+   "severity": {
+    "type": "score",
+    "instructions": "How severe is the underlying problem",
+    "criteria": [
+     "cosmetic",
+     "minor",
+     "major",
+     "critical"
+    ]
+   }
+  }
+ },
+ "result": {
+  "model": "jev-1.13.0",
+  "answers": {
+   "is_urgent": {
+    "type": "noul",
+    "noul": 0.98
+   },
+   "sentiment": {
+    "type": "choice",
+    "choice": "negative",
+    "confidence": 1,
+    "probabilities": {
+     "neutral": 0,
+     "positive": 0,
+     "negative": 1
+    }
+   },
+   "severity": {
+    "type": "score",
+    "score": 2.98,
+    "confidence": 0.98,
+    "legend": {
+     "0": "cosmetic",
+     "1": "minor",
+     "2": "major",
+     "3": "critical"
+    },
+    "probabilities": {
+     "0": 0,
+     "1": 0,
+     "2": 0.02,
+     "3": 0.98
+    }
+   }
+  },
+  "usage": {
+   "input_tokens": 407,
+   "output_tokens": 72
+  },
+  "latencyMs": 932,
+  "estimatedCostUs": 0.000017094000000000003,
+  "endpoint": "https://api.typesafe.ai/v1/systemone"
+ }
+}

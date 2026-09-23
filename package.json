@@ -1,6 +1,6 @@
 {
   "name": "dsh-jev-verify",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Jev (TypeSafe System One decision model) for DeepSeek Harness: fast decision tools (choice/score/noul, ~300ms parallel), auto-guard (deterministic + Jev risk/loop), in-chat board (jev_overview). Boot-stable by design: every registration is quarantined; a failure degrades one feature, never the profile.",
   "type": "module",
   "main": "lib/index.js",
@@ -15,7 +15,8 @@
       "default": "./lib/cases.js"
     },
     "./package.json": "./package.json",
-    "./cordis.patch.yml": "./cordis.patch.yml"
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./client": "./client/client.js"
   },
   "files": [
     "lib",
@@ -25,7 +26,8 @@
     "README.md",
     "README.zh.md",
     "LICENSE",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "client"
   ],
   "repository": {
     "type": "git",
@@ -74,7 +76,20 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-api-remotes"
+      ],
+      "platform": "web"
     }
   },
-  "homepage": "https://github.com/xienda/dsh-jev-verify"
+  "homepage": "https://github.com/xienda/dsh-jev-verify",
+  "devDependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "ws": "^8.21.3"
+  }
 }

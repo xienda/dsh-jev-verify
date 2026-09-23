@@ -2,3 +2,9 @@ node_modules/
 *.tgz
 bench/results/
 package-lock.json
+
+# Local verification scratch (headless-browser profiles and CDP harness output)
+.edge-*/
+edge-cdp*/
+edge-profile*/
+*-server.log
