@@ -124,21 +124,20 @@ deterministic rule, while "permanently wipe all staging data and delete every
 row from every table" was intercepted by **Jev at 91% confidence** (threshold
 0.8) before any command ran.
 
-## Dashboard (visualization)
+## Watching it work (no extra page)
 
-When the plugin runs in the **web profile** (dsh web), a local dashboard is
-mounted on the web server — no extra service, nothing leaves the machine:
+Visualization lives **inside the conversation** — no separate tab:
 
-- **http://127.0.0.1:3080/jev** — dark-theme page (Playground-style) with a live
-  decision stream (answers + confidence), latency trend SVG, question-type and
-  confidence summaries, guard event feed, and totals.
-- **GET /jev/api** — machine-readable snapshot (same data as the page).
-- **POST /jev/api/try** — one-shot playground evaluation right in the browser:
-  paste a `state` + questions JSON, get Jev's verdict, latency and cost.
+- `jev_overview` — ask the agent for it any time: a compact decision board
+  (recent answers + confidence, median/p95 latency, totals, guard events,
+  key/guard status) is rendered right in the chat.
+- `jev_verify` — live accuracy/latency/calibration benchmark results.
+- `jev_guard_status` — auto-guard counters and thresholds.
 
-All agent calls (`jev_decision` / `jev_verify`) and guard events are recorded
-into the roll (memory + `$DSH_HOME/jev-roll.jsonl`); the page polls every 5 s.
-Control via `dashboard.enabled` / `dashboard.basePath` (default `/jev`).
+An optional standalone page (`/jev`) exists for deployments that want it:
+set `dashboard.enabled: true` and open http://127.0.0.1:3080/jev.
+Every decision, verify and guard event is also appended to
+`$DSH_HOME/jev-roll.jsonl` for external tooling.
 
 ## Verification (measured, dated)
 
