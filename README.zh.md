@@ -25,7 +25,7 @@ TypeSafe AI（创始人 Diogo Almeida，前 OpenAI、ChatGPT 研究方向）于 
 
 ## 安装
 
-要求 Node >= 20，dsh >= 0.1.5-rc.2。
+要求 Node >= 20，dsh >= 0.1.5-rc.2。**同时兼容桌面版内置的 dsh 0.1.7-rc.1**：设置 API 的两代模型都支持。
 
 \`\`\`sh
 dsh plugin --profile web add dsh-jev-verify
@@ -44,6 +44,8 @@ dsh plugin --profile web add dsh-jev-verify
 
 重启 profile（或用插件市场一键安装，市场会自动完成以上两步）。
 
+> **配置入口随 dsh 版本而变**：0.1.5 及以前是「设置 → 插件 → 插件配置 → Jev」卡片；0.1.7 起该卡片与 settingsScope 服务已被移除（改用 profile 条目自带的表单，命名空间即条目 id jev-verify），此时可直接编辑 cordis.patch.yml。两个版本下工具与对话内联视图都照常工作。
+
 > 也可先安装 GUI 插件市场：\`dsh plugin --profile web add dshmarket\`，然后在「设置 → 插件市场」中一键安装本插件。
 
 ## API Key
@@ -51,7 +53,7 @@ dsh plugin --profile web add dsh-jev-verify
 到 <https://console.typesafe.ai/keys> 免费创建。任选其一：
 
 1. 启动环境里 \`export TYPESAFE_API_KEY=...\`；
-2. 设置 → 插件 → 插件配置 → Jev（凭据服务）；
+2. 设置里的 Jev 配置表单（0.1.5 及以前：插件 → 插件配置 → Jev；0.1.7 起：条目表单，或直接改 cordis.patch.yml）；
 3. 插件配置里写 \`apiKey\`。
 
 可选环境变量：\`TYPESAFE_BASE_URL\`（默认 \`https://api.typesafe.ai/v1\`）、\`TYPESAFE_MODEL\`（默认 \`jev-latest\`）。

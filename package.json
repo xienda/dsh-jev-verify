@@ -1,6 +1,6 @@
 {
   "name": "dsh-jev-verify",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Jev (TypeSafe System One decision model) for DeepSeek Harness: fast decision tools (choice/score/noul, ~300ms parallel), auto-guard (deterministic + Jev risk/loop), in-chat board (jev_overview). Boot-stable by design: every registration is quarantined; a failure degrades one feature, never the profile.",
   "type": "module",
   "main": "lib/index.js",
@@ -71,7 +71,7 @@
   },
   "dependencies": {
     "@deepseek-ai/dsh-tools": "0.1.5-rc.2",
-    "@deepseek-ai/schemastery": "^3.18.2"
+    "@deepseek-ai/schemastery": "^3.18.4"
   },
   "dsh": {
     "bundle": {

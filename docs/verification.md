@@ -137,6 +137,49 @@
 
 顺带修掉的真实 bug：进行中调用的参数在 `block.argsRaw`（已完成的才嵌在 `block.call.argsRaw`），原先只读后者导致运行中恒显示「0 个问题」。
 
+## 2026-09-26（v0.6.0：同时兼容两代设置 API，修掉一个真实加载 bug）
+
+背景：DeepSeek Harness **桌面版**内置的 dsh 是 **0.1.7-rc.1**，而此前插件是按 0.1.5-rc.2 写的。
+
+### 发现的两个真实不兼容（都已修）
+
+| 位置 | 0.1.5-rc.2 | 0.1.7-rc.1 | 后果 |
+| --- | --- | --- | --- |
+| 服务端 `ctx.settings.register(ns, schema, {base})` | 有 | **已移除** | 每次启动报 `settings.register is not a function` |
+| 客户端服务 `settingsScope` | 有 | **已移除**（全库 0 次） | 声明为必需服务 → 整个客户端插件（含内联工具视图）都**不会加载** |
+| 客户端槽 `settings.plugin.item` | 有 | **已移除**（0 次） | 旧配置卡片无处注册 |
+| `tool.call.toolview` | 有 | 有（93 处） | 对话内联视图两代都可用 |
+
+### 顺带修掉的一个自伤 bug
+
+客户端 `apply()` 原来**先注册配置卡片、且没有独立隔离**。卡片一旦抛错（0.1.7 上必然抛），
+后面的 `registerToolViews()` 就再也执行不到 —— 于是"配置卡片失败"连带把**对话内联视图**也弄没了。
+现在：工具视图**先注册**并单独隔离；卡片改为条件注入。
+
+### 兼容做法
+
+- 客户端 `inject` 只声明 `["slots"]`；`settingsScope` 用 `ctx.inject(["settingsScope"], cb)`
+  条件请求（与官方 dshmarket 相同的写法）。服务不存在时回调不执行，插件照常加载。
+- 服务端检测 `typeof settings.register === "function"`：有则沿用旧版注册+watch；
+  没有则进入 `entry-form` 模式——新版的命名空间就是 **profile 条目 id**（即 `jev-verify`），
+  表单由插件自己的 Config 生成，实时值改从 `ctx.config` 读取。
+- 新版**只把标了 `volatile` 的字段放进表单**，因此给 12 个面向用户的字段加了 volatile 标记。
+  schemastery 3.18.2 没有 `.volatile()`（3.18.4 才有），所以用 `vol()` 助手：
+  有方法就调用，没有就直接写 `schema.meta.volatile = true`（宿主读的就是这个 meta）。
+
+### 验证
+
+- 新增 `test/compat.test.mjs`（5 项）：volatile 标记齐全、0.1.7 无 register 时四个工具照常注册、
+  无 settings 服务的宿主同样拿到全部工具、0.1.5 仍注册命名空间、**实时配置确实从 fiber 读取**
+  （apply 时给 50、fiber 给 7 → 工具读到 7）。
+- `test/client.test.mjs` 重写为两代对照：0.1.7（无 settingsScope）下**内联工具视图仍然注册**，
+  且诊断标记为 `{"mode":"entry-form"}`。
+- 桌面版实测（用桌面版自带的 dsh 0.1.7-rc.1 起隔离实例）：
+  服务端日志由 `SETTINGS REGISTER FAILED` 变为 `settings: no register() on this host (dsh >= 0.1.7) — 使用条目表单`；
+  客户端 `0.6.0` 加载、`data-dsh-jev-card=registered:toolview`、**控制台错误 0 条**；
+  设置 →「内置插件 → 全局插件」列出 `jev-verify`（**已启用**）。
+- 真实 API 回归：`node bench/bench.mjs` → 准确率 **96.3%（26/27）**、中位 **321 ms**、$0.000365。
+
 ## 与 dsh-jev/官方博客声明的边界
 
 - 200x 提速、1/400 成本等对比数字依赖具体基线模型与工作负载，本插件不搬运这些相对值，只发布可直接核验的绝对值（延迟、成本、准确率、校准）。

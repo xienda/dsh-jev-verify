@@ -14,7 +14,7 @@
  * Hand-written, build-free, defensive: any failure degrades only this card.
  */
 window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
-  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.5.0";
+  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.6.0";
   "use strict";
   var module = { exports: {} };
   var react = require("react");
@@ -569,8 +569,14 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
         : null);
   }
 
-  function registerCard(ctx) {
-    var scope = ctx.settingsScope.bind({ namespace: NS });
+  /**
+   * Register the legacy plugin-configuration card.
+   *
+   * The caller supplies the bound scope because the service is requested
+   * conditionally (see apply): dsh >= 0.1.7 ships no `settingsScope` and no
+   * `settings.plugin.item` slot, so this card is a no-op there.
+   */
+  function registerCard(ctx, scope) {
     ctx.slots.inject("settings.plugin.item", function* () {
       yield ctx.slots.register(
         {
@@ -612,24 +618,57 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
   }
 
   function apply(ctx) {
-    try {
-      // Styles are cosmetic: a failure here must never cost the user the card.
-      try { ensureStyles(); } catch (e) { /* ignore */ }
-      registerCard(ctx);
-      // The inline tool view is additive: if it cannot register (an older
-      // deployment without the tool slot), the settings card must still work.
-      try { registerToolViews(ctx); } catch (e) { /* ignore */ }
+    var registered = [];
+    /** Publish what actually registered, so a missing surface is diagnosable. */
+    function mark() {
       try {
-        document.documentElement.setAttribute("data-dsh-jev-card", "registered");
+        document.documentElement.setAttribute("data-dsh-jev-card", "registered:" + (registered.join("+") || "none"));
       } catch (e) { /* ignore */ }
+    }
+    try {
+      // Styles are cosmetic: a failure here must never cost any surface.
+      try { ensureStyles(); } catch (e) { /* ignore */ }
+
+      // The inline tool view must survive EVERY deployment: the
+      // `tool.call.toolview` slot exists in both client generations. Register it
+      // first, in its own quarantine — a failure in the legacy settings card
+      // used to abort apply() before this ran, which silently removed the tool
+      // view on hosts where the card could not register.
+      try { registerToolViews(ctx); registered.push("toolview"); } catch (e) { /* ignore */ }
+      mark();
+
+      // The legacy card needs BOTH the slot and the `settingsScope` service.
+      // dsh >= 0.1.7 ships neither (an entry-owned auto form replaces the card),
+      // so request the service conditionally: a required-but-absent service
+      // would leave this whole plugin unapplied, tool view included.
       try {
-        var mirror = ctx.settingsScope.describe();
-        var snap = mirror && mirror.getSnapshot ? mirror.getSnapshot() : null;
-        var view = snap && snap.view ? snap.view : null;
-        var names = view && view.namespaces ? view.namespaces.map(function (v) { return v && v.ns ? v.ns : v; }) : [];
-        document.documentElement.setAttribute("data-dsh-jev-ns", JSON.stringify({ status: snap && snap.status, names: names, hasJev: names.indexOf(NS) >= 0 }).slice(0, 300));
+        ctx.inject(["settingsScope"], function (scoped) {
+          try {
+            var face = scoped.settingsScope;
+            if (!face || typeof face.bind !== "function") return;
+            registerCard(scoped, face.bind({ namespace: NS }));
+            registered.push("card");
+            mark();
+          } catch (e) { /* card is optional */ }
+        });
+      } catch (e) { /* host without conditional injection */ }
+
+      // Diagnostics: the describe mirror only exists on the generation that has
+      // the service. On the newer generation the entry-owned form is used, and
+      // there is nothing to mirror.
+      try {
+        var scopeFace = typeof ctx.get === "function" ? ctx.get("settingsScope") : undefined;
+        if (!scopeFace || typeof scopeFace.describe !== "function") {
+          document.documentElement.setAttribute("data-dsh-jev-ns", JSON.stringify({ mode: "entry-form", ns: NS }));
+        } else {
+          var mirror = scopeFace.describe();
+          var snap = mirror && mirror.getSnapshot ? mirror.getSnapshot() : null;
+          var view = snap && snap.view ? snap.view : null;
+          var names = view && view.namespaces ? view.namespaces.map(function (v) { return v && v.ns ? v.ns : v; }) : [];
+          document.documentElement.setAttribute("data-dsh-jev-ns", JSON.stringify({ mode: "scoped", status: snap && snap.status, names: names, hasJev: names.indexOf(NS) >= 0 }).slice(0, 300));
+        }
       } catch (e) {
-        document.documentElement.setAttribute("data-dsh-jev-ns", "err: " + String(e && e.message ? e.message : e).slice(0, 200));
+        try { document.documentElement.setAttribute("data-dsh-jev-ns", "err: " + String(e && e.message ? e.message : e).slice(0, 200)); } catch (e2) { /* ignore */ }
       }
     } catch (error) {
       try {
@@ -650,7 +689,10 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
   }
 
   module.exports = {
-    inject: ["slots", "settingsScope"],
+    // Only `slots` is required. `settingsScope` is requested conditionally in
+    // apply(): dsh >= 0.1.7 does not provide it, and requiring it there would
+    // keep the entire client plugin (tool view included) from applying.
+    inject: ["slots"],
     apply: apply,
     name: "jev-verify",
     // Internal, for the offline render tests only: decoding the wire answer
