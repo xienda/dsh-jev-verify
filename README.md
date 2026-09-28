@@ -3,7 +3,7 @@
 Jev — TypeSafe AI's **System One** decision model — as a first-class plugin for
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh).
 
-Jev does not generate text. Given a \`state\` plus typed questions it returns
+Jev does not generate text. Given a `state` plus typed questions it returns
 **typed answers with calibrated probabilities** in one parallel API call
 (~70–500 ms published). This plugin exposes that as agent tools, adds an
 opt-in **auto-guard** (risk + loop checks), and makes sure the claims are
@@ -11,24 +11,44 @@ opt-in **auto-guard** (risk + loop checks), and makes sure the claims are
 
 | Tool | What it does |
 | --- | --- |
-| \`jev_decision\` | Choice / Score / Noul questions against a \`state\` in ONE call. Returns typed answers, confidence, probabilities, token usage, measured latency and estimated cost. |
-| \`jev_verify\` | Runs the built-in labeled benchmark (23 cases / 27 questions, incl. guard verdicts) against the **live** API and returns measured accuracy, median/p95 latency, calibration and cost. The anti-deception self-test. |
-| \`jev_guard_status\` | Audit the auto-guard: counts, guarded tools, thresholds, budget — guard behavior is always transparent. |
+| `jev_decision` | Choice / Score / Noul questions against a `state` in ONE call. Returns typed answers, confidence, probabilities, token usage, measured latency and estimated cost. |
+| `jev_verify` | Runs the built-in labeled benchmark (23 cases / 27 questions, incl. guard verdicts) against the **live** API and returns measured accuracy, median/p95 latency, calibration and cost. The anti-deception self-test. |
+| `jev_guard_status` | Audit the auto-guard: counts, guarded tools, thresholds, budget — guard behavior is always transparent. |
 
-**Auto-guard mode** (opt-in \`autoGuard.enabled\`): before shell-like tool calls
-(\`bash\`/\`pwsh\`/\`run_code\`/…), a free deterministic blacklist blocks
+**Auto-guard mode** (opt-in `autoGuard.enabled`): before shell-like tool calls
+(`bash`/`pwsh`/`run_code`/…), a free deterministic blacklist blocks
 hard-destructive commands (rm -rf /, disk format, drop database, credential
 exfiltration, ...); risky-looking commands that pass it are judged by **Jev**
 (risk noul ≥ threshold ⇒ deny; fail-open with a warning on API errors). A loop
 guard evaluates repeated same-tool calls for semantic stalls and injects advice
-instead of blocking. Every verdict is auditable via \`jev_guard_status\`.
+instead of blocking. Every verdict is auditable via `jev_guard_status`.
 
 **Honest by design** — no mock mode, no silent fallback:
 
-- without a \`TYPESAFE_API_KEY\`, tools and guard fail with explicit setup instructions (the guard fails open with a warning — it never silently pretends to have checked);
-- every \`jev_decision\` result includes the model, latency and token usage, so each call is auditable;
-- \`jev_verify\` refuses to report numbers it did not measure;
-- the benchmark CLI (\`bench/bench.mjs\`) is dependency-free and reproducible with any key.
+- without a `TYPESAFE_API_KEY`, tools and guard fail with explicit setup instructions (the guard fails open with a warning — it never silently pretends to have checked);
+- every `jev_decision` result includes the model, latency and token usage, so each call is auditable;
+- `jev_verify` refuses to report numbers it did not measure;
+- the benchmark CLI (`bench/bench.mjs`) is dependency-free and reproducible with any key.
+
+## What's new in 0.7.0
+
+- **Structured in-chat views for every tool.** Tool results now carry a
+  `presentationMeta` projection (`kind: decision | overview | guard | verify`),
+  so the conversation renders a decision card, a guard board and a benchmark
+  report — answers, confidence bars, status chips and stat grids — instead of
+  raw text. The view falls back to parsing the tool text when `meta` is absent.
+- **Full plugin settings card.** Settings > Plugins > Plugin configuration > Jev
+  now covers every option: credentials (key, credential-ref, base URL, model,
+  timeout, question cap), tool toggles, the whole auto-guard block (safety/loop
+  switches, guarded tool list, deny threshold, Jev budget, loop tuning) and the
+  dashboard (enable + base path) — with numeric validation and dirty-state
+  handling.
+- **Config handling hardened.** Volatile config fields (schemastery
+  `.volatile()`) are unwrapped before use, so an object-shaped `apiKeyEnv` no
+  longer crashes `credentialRef(...)`, `autoGuard.enabled` / `dashboard.enabled`
+  actually take effect, and numeric options are read as numbers.
+- **Tests: 19 passing** (`npm test`) covering boot, client render, tool views,
+  settings, dashboard, guard and the presentation projections.
 
 ## Why Jev
 
@@ -43,53 +63,53 @@ loop: classification, routing, triage, scoring, guardrails, truth checks.
 
 Requires Node >= 20 and dsh >= 0.1.5-rc.2.
 
-\`\`\`sh
+```sh
 dsh plugin --profile web add dsh-jev-verify
-\`\`\`
+```
 
-then add a loader entry to \`$DSH_HOME/profiles/<profile>/cordis.patch.yml\`:
+then add a loader entry to `$DSH_HOME/profiles/<profile>/cordis.patch.yml`:
 
-\`\`\`yaml
+```yaml
 - insert:
     - id: jev-verify
       name: dsh-jev-verify
       config:
         autoGuard:
           enabled: true     # opt-in auto-guard
-\`\`\`
+```
 
 Restart the profile (or use the plugin market's one-click install, which
 performs both steps).
 
-> Tip: for the **dsh market UI** install \`dshmarket\` first
-> (\`dsh plugin --profile web add dshmarket\`) and install this plugin from
+> Tip: for the **dsh market UI** install `dshmarket` first
+> (`dsh plugin --profile web add dshmarket`) and install this plugin from
 > Settings > 插件市场.
 
 ## API key
 
 Get a free key at <https://console.typesafe.ai/keys>. Then choose one:
 
-1. \`export TYPESAFE_API_KEY=...\` in the launching environment, or
+1. `export TYPESAFE_API_KEY=...` in the launching environment, or
 2. Settings > Plugins > Plugin configuration > Jev (credentials service), or
-3. set \`apiKey\` in the plugin config.
+3. set `apiKey` in the plugin config.
 
-Optional environment overrides: \`TYPESAFE_BASE_URL\` (default
-\`https://api.typesafe.ai/v1\`), \`TYPESAFE_MODEL\` (default \`jev-latest\`).
+Optional environment overrides: `TYPESAFE_BASE_URL` (default
+`https://api.typesafe.ai/v1`), `TYPESAFE_MODEL` (default `jev-latest`).
 
 ## Usage
 
-Ask the agent to use \`jev_decision\` for any fast judgment. Example prompt:
+Ask the agent to use `jev_decision` for any fast judgment. Example prompt:
 
-> Use \`jev_decision\` with state = "<ticket text>" and these questions:
-> \`department\` (choice, criteria billing/technical/sales), \`is_urgent\` (noul),
-> \`severity\` (score, 3 levels). Report answers + confidence.
+> Use `jev_decision` with state = "<ticket text>" and these questions:
+> `department` (choice, criteria billing/technical/sales), `is_urgent` (noul),
+> `severity` (score, 3 levels). Report answers + confidence.
 
-Or request \`jev_verify\` at any time to confirm the endpoint is healthy, and
-\`jev_guard_status\` to see how the auto-guard is behaving.
+Or request `jev_verify` at any time to confirm the endpoint is healthy, and
+`jev_guard_status` to see how the auto-guard is behaving.
 
 ### Direct tool call shape
 
-\`\`\`jsonc
+```jsonc
 {
   "state": "I was double-charged for my subscription and I want a refund.",
   "questions": [
@@ -102,24 +122,24 @@ Or request \`jev_verify\` at any time to confirm the endpoint is healthy, and
       "instructions": "The message conveys urgency or time-sensitivity" }
   ]
 }
-\`\`\`
+```
 
-Returns per-question \`answers\` (choice/score/noul + confidence + probabilities),
-\`usage\`, \`latencyMs\` and \`estimatedCostUs\`.
+Returns per-question `answers` (choice/score/noul + confidence + probabilities),
+`usage`, `latencyMs` and `estimatedCostUs`.
 
 ## Auto-guard
 
-When \`autoGuard.enabled: true\`, two hooks run next to every guarded tool call:
+When `autoGuard.enabled: true`, two hooks run next to every guarded tool call:
 
-1. **Safety** (\`tools/pre-execute\`): deterministic blacklist first (free),
-   Jev risk judgment for suspect commands; deny above \`denyThreshold\` with an
+1. **Safety** (`tools/pre-execute`): deterministic blacklist first (free),
+   Jev risk judgment for suspect commands; deny above `denyThreshold` with an
    explicit reason, fail-open when Jev is unavailable.
-2. **Loop** (\`tools/post-execute\`): consecutive same-tool calls with long
+2. **Loop** (`tools/post-execute`): consecutive same-tool calls with long
    outputs trigger a Jev stall judgment; on a stalled verdict a non-blocking
    advisory is injected into the next request, then a cooldown applies.
 
-Both degrade gracefully and are fully countable via \`jev_guard_status\`.
-Measured demo (2026-09-21): \`remove-item -Recurse …\` was blocked by the
+Both degrade gracefully and are fully countable via `jev_guard_status`.
+Measured demo (2026-09-21): `remove-item -Recurse …` was blocked by the
 deterministic rule, while "permanently wipe all staging data and delete every
 row from every table" was intercepted by **Jev at 91% confidence** (threshold
 0.8) before any command ran.
@@ -128,11 +148,18 @@ row from every table" was intercepted by **Jev at 91% confidence** (threshold
 
 Visualization lives **inside the conversation** — no separate tab:
 
-- `jev_overview` — ask the agent for it any time: a compact decision board
-  (recent answers + confidence, median/p95 latency, totals, guard events,
-  key/guard status) is rendered right in the chat.
-- `jev_verify` — live accuracy/latency/calibration benchmark results.
-- `jev_guard_status` — auto-guard counters and thresholds.
+Each tool ships a `presentationMeta` projection, so results render as
+structured cards rather than raw JSON:
+
+- `jev_overview` — a decision board: status chips (model / key / guard /
+  threshold), eight stats (decisions, verifies, denials, advisories, median
+  latency, average confidence, input tokens, total cost) plus the latest
+  decisions and guard events.
+- `jev_verify` — the live accuracy / latency / calibration report: accuracy,
+  correct count, high-confidence accuracy, median & p95 latency, tokens, cost
+  and the mislabelled cases.
+- `jev_guard_status` — guard cards: guarded tools, deny threshold, session
+  budget, safety & loop counters and the last guarded tool.
 
 An optional standalone page (`/jev`) exists for deployments that want it:
 set `dashboard.enabled: true` and open http://127.0.0.1:3080/jev.
@@ -144,41 +171,50 @@ Every decision, verify and guard event is also appended to
 See [docs/verification.md](docs/verification.md) for methodology and the latest
 dated results.
 
-**Status**: ✅ **verified against the live API on 2026-09-21** (\`jev-latest\`):
+**Status**: ✅ **verified against the live API on 2026-09-21** (`jev-latest`):
 accuracy **96.3%** (26/27) with the guard-inclusive benchmark, median latency
 **283–308 ms** across runs, ≈ $0.0004 per 27-question run. The only mislabel is
 the documented boundary near-miss (severity score 0.01 vs expected 0).
 
 Reproduce any time:
 
-\`\`\`sh
+```sh
 TYPESAFE_API_KEY=... node bench/bench.mjs            # 1 pass (27 questions)
 TYPESAFE_API_KEY=... node bench/bench.mjs --repeat 3 # latency stability
-\`\`\`
+```
 
 or ask the agent: *“run jev_verify”*.
+
+**Regression (2026-09-28, v0.7.0)**: in a headless profile with
+`autoGuard.enabled: true`, `jev_guard_status` reports the armed guard (tools
+list, `deny threshold 0.8`, budget) and `jev_overview` returns its board without
+the former `credentialRef` crash — the volatile-config unwrapping fix. `npm test`
+passes 19/19.
 
 ## Configuration
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| \`apiKeyEnv\` | \`TYPESAFE_API_KEY\` | credential-ref / env var for the key |
-| \`apiKey\` | — | literal key override (secret) |
-| \`baseURL\` | \`https://api.typesafe.ai/v1\` | API base |
-| \`model\` | \`jev-latest\` | model (pin e.g. \`jev-1.13.0\`) |
-| \`timeoutMs\` | 15000 | per-call timeout |
-| \`maxQuestionsPerCall\` | 25 | question cap per call |
-| \`verifyEnabled\` | true | register \`jev_verify\` |
-| \`autoGuard.enabled\` | false | master switch for auto-guard hooks |
-| \`autoGuard.safetyCheck\` | true | pre-execute risk check for guarded tools |
-| \`autoGuard.loopCheck\` | true | semantic stall detection |
-| \`autoGuard.tools\` | bash/pwsh/run_code/terminal | tools the safety check applies to |
-| \`autoGuard.denyThreshold\` | 0.85 | Jev noul ≥ threshold ⇒ deny / advise |
-| \`autoGuard.maxJevCallsPerSession\` | 50 | guard Jev budget per session |
-| \`autoGuard.loopConsecutive\` | 3 | same-tool calls before loop check |
-| \`autoGuard.loopCooldownMs\` | 60000 | cooldown after a stall verdict |
-| \`autoGuard.loopMinChars\` | 200 | min result length for loop check |
-| \`autoGuard.statusTool\` | true | register \`jev_guard_status\` |
+| `apiKeyEnv` | `TYPESAFE_API_KEY` | credential-ref / env var for the key |
+| `apiKey` | — | literal key override (secret) |
+| `baseURL` | `https://api.typesafe.ai/v1` | API base |
+| `model` | `jev-latest` | model (pin e.g. `jev-1.13.0`) |
+| `timeoutMs` | 15000 | per-call timeout |
+| `maxQuestionsPerCall` | 25 | question cap per call |
+| `verifyEnabled` | true | register `jev_verify` |
+| `autoGuard.enabled` | false | master switch for auto-guard hooks |
+| `autoGuard.safetyCheck` | true | pre-execute risk check for guarded tools |
+| `autoGuard.loopCheck` | true | semantic stall detection |
+| `autoGuard.tools` | bash/pwsh/run_code/terminal | tools the safety check applies to |
+| `autoGuard.denyThreshold` | 0.85 | Jev noul ≥ threshold ⇒ deny / advise |
+| `autoGuard.maxJevCallsPerSession` | 50 | guard Jev budget per session |
+| `autoGuard.loopConsecutive` | 3 | same-tool calls before loop check |
+| `autoGuard.loopCooldownMs` | 60000 | cooldown after a stall verdict |
+| `autoGuard.loopMinChars` | 200 | min result length for loop check |
+| `autoGuard.statusTool` | true | register `jev_guard_status` |
+| `autoGuard.determinismFirst` | true | run the free deterministic check before Jev |
+| `dashboard.enabled` | false | serve the optional standalone board page |
+| `dashboard.basePath` | `/jev` | path of that board page |
 
 ## Related projects
 

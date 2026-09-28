@@ -14,7 +14,7 @@
  * Hand-written, build-free, defensive: any failure degrades only this card.
  */
 window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
-  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.6.0";
+  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.7.0";
   "use strict";
   var module = { exports: {} };
   var react = require("react");
@@ -99,6 +99,17 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     ".djev-barOk{background:var(--dsw-alias-label-success)}",
     ".djev-barWarn{background:var(--dsw-alias-label-warning)}",
     ".djev-ansWhy{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}",
+    ".djev-chips{display:flex;gap:6px;flex-wrap:wrap;padding:2px 0 6px}",
+    ".djev-chip{border-radius:10px;padding:1px 8px;font-size:11px;background:var(--dsw-alias-bg-l2,#0000000d);color:var(--dsw-alias-label-secondary)}",
+    ".djev-chipOk{color:var(--dsw-alias-label-success,#1a7f37)}",
+    ".djev-chipWarn{color:var(--dsw-alias-label-warning,#9a6700)}",
+    ".djev-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px;padding:2px 0 8px}",
+    ".djev-stat{display:flex;flex-direction:column;gap:1px}",
+    ".djev-statVal{font-variant-numeric:tabular-nums;font-size:14px;color:var(--dsw-alias-label-primary)}",
+    ".djev-statLabel{font-size:11px;color:var(--dsw-alias-label-tertiary)}",
+    ".djev-recent{display:flex;gap:8px;align-items:baseline;padding:2px 0;font-size:12px}",
+    ".djev-recentMain{flex:1;color:var(--dsw-alias-label-secondary);word-break:break-word}",
+    ".djev-recentTs{color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}",
     ".djev-tvFoot{border-top:.5px solid var(--dsw-alias-border-l2);display:flex;gap:12px;flex-wrap:wrap;padding:8px 12px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}",
   ].join("");
 
@@ -129,6 +140,12 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
           hint: "例如 TYPESAFE_API_KEY。API Key 为空时用它解析。" },
         { path: "model", label: "模型", control: "text",
           hint: "默认 jev-latest；可固定版本以获得可复现的判定。" },
+        { path: "baseURL", label: "API 端点", control: "text",
+          hint: "默认 https://api.typesafe.ai/v1；仅私有网关才需修改。" },
+        { path: "timeoutMs", label: "单次超时（毫秒）", control: "text", numeric: true, min: 1000, max: 120000,
+          hint: "默认 15000。网络慢时上调；过小会让判定被误判为失败。" },
+        { path: "maxQuestionsPerCall", label: "每次最多问题数", control: "text", numeric: true, min: 1, max: 50,
+          hint: "默认 25（服务端上限 50）。一次调用内并行评估，不额外计费。" },
       ],
     },
     {
@@ -145,8 +162,26 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       fields: [
         { path: "autoGuard.enabled", label: "高危命令 / 循环检测走 Jev", control: "toggle",
           hint: "确定性规则先拦；不确定的命令再交给 Jev 判定风险。" },
-        { path: "autoGuard.denyThreshold", label: "拒绝阈值", control: "text", numeric: true,
+        { path: "autoGuard.denyThreshold", label: "拒绝阈值", control: "text", numeric: true, min: 0.5, max: 1,
           hint: "0.5–1 之间。Jev 置信度达到该值即拒绝执行。" },
+        { path: "autoGuard.safetyCheck", label: "高风险命令安全判定", control: "toggle",
+          hint: "对 bash/pwsh/run_code 等工具的调用做执行前安全判定。" },
+        { path: "autoGuard.loopCheck", label: "循环 / 停滞检测", control: "toggle",
+          hint: "同一状态反复出现时注入一次纠偏提示（每会话有限次）。" },
+        { path: "autoGuard.determinismFirst", label: "确定性规则优先", control: "toggle",
+          hint: "明显凭据外泄等模式直接拒绝，不消耗 Jev 调用。" },
+        { path: "autoGuard.tools", label: "受护栏工具名", control: "list",
+          hint: "逗号分隔，例如 bash, pwsh, run_code, terminal。" },
+        { path: "autoGuard.statusTool", label: "注册 jev_guard_status 状态工具", control: "toggle",
+          hint: "让 Agent 随时查询护栏计数器与预算。" },
+        { path: "autoGuard.maxJevCallsPerSession", label: "会话护栏预算（次 Jev 调用）", control: "text", numeric: true, min: 1, max: 1000,
+          hint: "默认 50。到达上限后护栏只做确定性规则判定。" },
+        { path: "autoGuard.loopConsecutive", label: "停滞判定连续次数", control: "text", numeric: true, min: 2, max: 10,
+          hint: "默认 3：同一状态连续出现 3 次即提示。" },
+        { path: "autoGuard.loopCooldownMs", label: "停滞提示冷却（毫秒）", control: "text", numeric: true, min: 0, max: 3600000,
+          hint: "默认 60000：两次提示之间的最小间隔。" },
+        { path: "autoGuard.loopMinChars", label: "停滞判定最小字符数", control: "text", numeric: true, min: 0, max: 100000,
+          hint: "默认 200：短输出不参与停滞比对。" },
       ],
     },
     {
@@ -154,9 +189,17 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       fields: [
         { path: "dashboard.enabled", label: "独立 /jev 网页看板", control: "toggle",
           hint: "对话内可用 jev_overview 获得同样的指标，通常无需开启。" },
+        { path: "dashboard.basePath", label: "看板路径", control: "text",
+          hint: "默认 /jev。启用看板后在本机浏览器打开该路径。" },
       ],
     },
   ];
+
+  /** Field spec by path, so save() can coerce text controls to their type. */
+  var FIELD_BY_PATH = {};
+  GROUPS.forEach(function (g) {
+    g.fields.forEach(function (f) { FIELD_BY_PATH[f.path] = f; });
+  });
 
   function pathGet(obj, path) {
     return path.split(".").reduce(function (acc, k) {
@@ -253,7 +296,13 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       var paths = Object.keys(draft);
       var chain = Promise.resolve();
       paths.forEach(function (path) {
-        chain = chain.then(function () { return scope.set(path, draft[path]); });
+        var field = FIELD_BY_PATH[path];
+        var next = draft[path];
+        // Numeric controls collect text; the config schema expects a number.
+        if (field && field.numeric && typeof next === "string" && next.trim() !== "" && isFinite(Number(next))) {
+          next = Number(next);
+        }
+        chain = chain.then(function () { return scope.set(path, next); });
       });
       chain.then(function () {
         setSaving(false);
@@ -266,12 +315,25 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     }
 
     var keyConfigured = !!(value.apiKey || value.apiKeyEnv);
-    var threshold = current("autoGuard.denyThreshold");
-    var thresholdInvalid = (function () {
-      if (threshold === undefined || threshold === null || threshold === "") return false;
-      var n = Number(threshold);
-      return !isFinite(n) || n < 0.5 || n > 1;
-    })();
+    /**
+     * Numeric fields hold text while they are being edited, so validity is
+     * checked here against the field spec (min/max from the same schema the
+     * server validates with) instead of per field at the call site.
+     */
+    function fieldInvalid(f) {
+      if (!f.numeric) return false;
+      var v = current(f.path);
+      if (v === undefined || v === null || v === "") return false;
+      var n = Number(v);
+      if (!isFinite(n)) return true;
+      if (f.min != null && n < f.min) return true;
+      if (f.max != null && n > f.max) return true;
+      return false;
+    }
+    var hasInvalid = false;
+    GROUPS.forEach(function (g) {
+      g.fields.forEach(function (f) { if (fieldInvalid(f)) hasInvalid = true; });
+    });
 
     function renderField(f) {
       var id = "dsh-jev-" + f.path.replace(/\./g, "-");
@@ -281,12 +343,23 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
           disabled: !writable, onChange: function (v) { edit(f.path, v); },
         });
       }
-      var invalid = f.path === "autoGuard.denyThreshold" ? thresholdInvalid : false;
+      if (f.control === "list") {
+        var raw = current(f.path);
+        return h(TextField, {
+          key: f.path, id: id, label: f.label, hint: f.hint,
+          value: Array.isArray(raw) ? raw.join(", ") : raw == null ? "" : String(raw),
+          disabled: !writable,
+          onChange: function (v) {
+            edit(f.path, v.split(/[,\s]+/).filter(function (s) { return s.length > 0; }));
+          },
+        });
+      }
       return h(TextField, {
         key: f.path, id: id, label: f.label, hint: f.hint,
         secret: f.control === "secret", numeric: f.numeric,
         value: current(f.path), disabled: !writable,
-        invalid: invalid, invalidLabel: "需为 0.5–1 之间的数值。",
+        invalid: fieldInvalid(f),
+        invalidLabel: f.path === "autoGuard.denyThreshold" ? "需为 0.5–1 之间的数值。" : "需为有效数值。",
         onChange: function (v) { edit(f.path, v); },
       });
     }
@@ -330,7 +403,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
           }, "放弃修改"),
           h("button", {
             type: "button", className: "djev-save",
-            disabled: !dirty || saving || thresholdInvalid || !writable, onClick: save,
+            disabled: !dirty || saving || hasInvalid || !writable, onClick: save,
           }, saving ? "保存中…" : "保存")),
         h("p", { className: "djev-note" },
           "Jev = TypeSafe System One：jev_decision（快判定）、jev_verify（自检）、jev_overview（对话内看板）。Key 只写本机 settings，绝不外发；未配置 Key 时工具与护栏会明确报错，绝不伪造结果。"))
@@ -450,15 +523,163 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
         String(a.reasoning || a.reason).slice(0, 400)) : null);
   }
 
+  /** Round a 0..1 ratio to a whole percentage, or null when unusable. */
+  function pct(ratio) {
+    return typeof ratio === "number" && isFinite(ratio) ? Math.round(Math.max(0, Math.min(1, ratio)) * 100) : null;
+  }
+
+  /** One labelled figure on a board view (overview / guard / verify). */
+  function Stat(props) {
+    return h("div", { className: "djev-stat" },
+      h("span", { className: "djev-statVal" }, props.value),
+      h("span", { className: "djev-statLabel" }, props.label));
+  }
+
   /**
-   * The inline view for one Jev tool call. Running calls show what was asked;
-   * settled calls show the parsed answers with confidence, plus latency/cost.
+   * Rebuild the wire answer shape from a persisted presentation answer.
+   *
+   * presentationMeta stores the decided value in a tool-agnostic form
+   * (noul -> the yes-probability, choice -> the chosen option, score -> the
+   * number). Decoding it back into the wire shape lets both paths share
+   * readAnswer/AnswerRow, so the meta card and the legacy text card can never
+   * disagree about what a decision means.
+   */
+  function metaAnswerToWire(a) {
+    if (!a || typeof a !== "object") return a;
+    if (a.type === "noul" && typeof a.value === "number") return { noul: a.value };
+    if (a.type === "choice") return { choice: a.value, confidence: a.confidence, probabilities: a.probabilities };
+    if (a.type === "score") return { score: a.value, confidence: a.confidence, legend: a.legend, probabilities: a.probabilities };
+    return Object.assign({}, a);
+  }
+
+  /** jev_decision: one row per question with its decided value and confidence. */
+  function DecisionBody(props) {
+    var answers = props.answers || {};
+    var names = Object.keys(answers);
+    if (names.length === 0) return null;
+    return h("div", null, names.map(function (n) {
+      return h(AnswerRow, { key: n, name: n, answer: metaAnswerToWire(answers[n]) });
+    }));
+  }
+  /** jev_overview: status chips, aggregate stats, and the recent-activity feed. */
+  function OverviewBody(props) {
+    var m = props.meta || {};
+    var st = m.status || {};
+    var sum = m.summary || {};
+    var recent = (m.recent || []).slice().reverse();
+    var guards = (m.guards || []).slice().reverse();
+    return h("div", null,
+      h("div", { className: "djev-chips" },
+        h("span", { className: "djev-chip" }, "模型 " + (st.model || "—")),
+        h("span", { className: "djev-chip " + (st.keyConfigured ? "djev-chipOk" : "djev-chipWarn") },
+          st.keyConfigured ? "API Key 已配置" : "API Key 未配置"),
+        h("span", { className: "djev-chip " + (st.guardActive ? "djev-chipOk" : "djev-chipWarn") },
+          st.guardActive ? "自动护栏已启用" : "自动护栏未启用"),
+        st.denyThreshold == null ? null : h("span", { className: "djev-chip" }, "拦截阈值 " + st.denyThreshold)),
+      h("div", { className: "djev-stats" },
+        h(Stat, { key: "calls", value: sum.calls, label: "次判定" }),
+        h(Stat, { key: "verifies", value: sum.verifies, label: "次实测" }),
+        h(Stat, { key: "deny", value: sum.guardDenials, label: "次拦截" }),
+        h(Stat, { key: "adv", value: sum.guardAdvisories, label: "次提示" }),
+        h(Stat, { key: "med", value: sum.medianLatencyMs == null ? "—" : sum.medianLatencyMs + " ms", label: "中位延迟" }),
+        h(Stat, { key: "conf", value: sum.avgConfidence == null ? "—" : pct(sum.avgConfidence) + "%", label: "平均置信度" }),
+        h(Stat, { key: "tok", value: sum.totalInputTokens, label: "input tokens" }),
+        h(Stat, { key: "cost", value: "$" + Number(sum.totalCostUs || 0).toFixed(6), label: "累计成本" })),
+      recent.length ? h("p", { className: "djev-ansWhy" }, "最近调用（新→旧）") : null,
+      recent.map(function (e, i) {
+        return h("div", { key: "r" + i, className: "djev-recent" },
+          h("span", { className: "djev-tvDot " + (e.kind === "guard" ? "djev-tvDotErr" : "djev-tvDotOk") }),
+          h("span", { className: "djev-recentMain" },
+            e.kind === "decision"
+              ? (e.questions || []).map(function (q) {
+                  return q.name + "=" + (q.value == null ? "—" : q.value)
+                    + (typeof q.confidence === "number" ? "（" + pct(q.confidence) + "%）" : "");
+                }).join("、")
+              : e.kind === "guard" ? (e.action + " · " + (e.detail || "")) : (e.report || "")),
+          e.ts ? h("span", { className: "djev-recentTs" }, String(e.ts).slice(11, 19)) : null);
+      }),
+      guards.length ? h("p", { className: "djev-ansWhy" }, "护栏事件（新→旧）") : null,
+      guards.map(function (g, i) {
+        return h("div", { key: "g" + i, className: "djev-recent" },
+          h("span", { className: "djev-tvDot djev-tvDotErr" }),
+          h("span", { className: "djev-recentMain" }, (g.action || "?") + " · " + (g.detail || "")),
+          g.ts ? h("span", { className: "djev-recentTs" }, String(g.ts).slice(11, 19)) : null);
+      }));
+  }
+
+  /** jev_guard_status: whether the guard is armed, and what it has done. */
+  function GuardBody(props) {
+    var m = props.meta || {};
+    var s = m.safety || {};
+    var l = m.loop || {};
+    return h("div", null,
+      h("div", { className: "djev-chips" },
+        h("span", { className: "djev-chip " + (m.enabled ? "djev-chipOk" : "djev-chipWarn") },
+          m.enabled ? "护栏运行中" : "护栏未启用"),
+        h("span", { className: "djev-chip" }, "拦截阈值 " + (m.denyThreshold == null ? "—" : m.denyThreshold)),
+        h("span", { className: "djev-chip" }, "本会话剩余预算 " + (m.budgetRemaining == null ? "—" : m.budgetRemaining))),
+      h("div", { className: "djev-stats" },
+        h(Stat, { key: "checks", value: s.checks, label: "次安全判定" }),
+        h(Stat, { key: "jev", value: s.jevCalls, label: "次 Jev 调用" }),
+        h(Stat, { key: "denied", value: s.denied, label: "次拦截" }),
+        h(Stat, { key: "det", value: s.deterministicDenied, label: "次规则拦截" }),
+        h(Stat, { key: "audit", value: s.auditCalls, label: "次执行审计" }),
+        h(Stat, { key: "loop", value: l.checks, label: "次循环检查" }),
+        h(Stat, { key: "injected", value: l.injected, label: "次停滞提示" })),
+      (m.tools || []).length
+        ? h("p", { className: "djev-ansWhy" }, "受护栏工具：" + m.tools.join("、"))
+        : h("p", { className: "djev-ansWhy" }, "受护栏工具：（未武装 — 检查 autoGuard.enabled 与工具名清单）"),
+      s.lastSeenTool ? h("p", { className: "djev-ansWhy" }, "最近工具：" + s.lastSeenTool) : null,
+      h("p", { className: "djev-tvFoot" },
+        h("span", null, m.enabled ? "每次高风险调用都先经 Jev 判定，记录可审计" : "启用 autoGuard 后，高风险调用会先经 Jev 判定")));
+  }
+  /** jev_verify: the measured benchmark numbers, or an honest "not run". */
+  function VerifyBody(props) {
+    var m = props.meta || {};
+    if (m.verified !== true) {
+      return h("p", { className: "djev-tvState" }, m.reason || "验证未运行 — 未配置 API Key，不伪造结果。");
+    }
+    var failures = m.failures || [];
+    return h("div", null,
+      h("div", { className: "djev-chips" },
+        h("span", { className: "djev-chip djev-chipOk" }, "实测数据"),
+        h("span", { className: "djev-chip" }, "模型 " + (m.model || "—")),
+        h("span", { className: "djev-chip" }, m.questionCount + " 题 / " + m.caseCount + " 用例")),
+      h("div", { className: "djev-stats" },
+        h(Stat, { key: "acc", value: m.accuracy == null ? "—" : pct(m.accuracy) + "%", label: "准确率" }),
+        h(Stat, { key: "ok", value: m.correct + "/" + m.questionCount, label: "答对" }),
+        h(Stat, { key: "hc", value: m.highConfidenceAccuracy == null ? "—" : pct(m.highConfidenceAccuracy) + "%", label: "高置信准确率" }),
+        h(Stat, { key: "med", value: m.medianMs + " ms", label: "中位延迟" }),
+        h(Stat, { key: "p95", value: m.p95Ms + " ms", label: "p95 延迟" }),
+        h(Stat, { key: "tok", value: m.inputTokens, label: "input tokens" }),
+        h(Stat, { key: "cost", value: m.estimatedUsd == null ? "—" : "$" + Number(m.estimatedUsd).toFixed(6), label: "成本" })),
+      failures.length ? h("p", { className: "djev-ansWhy" }, "误判用例：") : null,
+      failures.map(function (f, i) {
+        return h("p", { key: "f" + i, className: "djev-tvState" },
+          (f.caseId ? f.caseId + "/" : "") + f.question + "：期望 " + JSON.stringify(f.expected)
+            + "，实得 " + JSON.stringify(f.actual)
+            + (f.confidence == null ? "" : "（置信度 " + pct(f.confidence) + "%）"));
+      }),
+      m.ranAt ? h("p", { className: "djev-tvFoot" }, h("span", null, "实测时间 " + m.ranAt)) : null);
+  }
+  /**
+   * The inline view for one Jev tool call.
+   *
+   * Two ways in, one shape out:
+   *   1. Preferred — block.meta, the tool's own presentation payload persisted
+   *      on tool/result (dsh-tools ToolResult.meta). It is already structured,
+   *      so the card renders without re-parsing anything.
+   *   2. Legacy — hosts without presentationMeta only carry the human-readable
+   *      render text; that path parses it as JSON when it can.
+   *
+   * Running calls show what was asked; settled calls show real figures.
    */
   function JevToolView(props) {
     var block = props.block || {};
     var isResult = block.kind === "tool-result";
     var running = !isResult;
     var isError = !!(isResult && block.isError);
+    var toolName = props.toolName || (block.call && block.call.toolName) || "";
 
     // Running calls carry argsRaw on the block itself; settled ones nest it
     // under block.call (backfilled from the in-window tool/call).
@@ -479,12 +700,16 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     }
     var state = typeof args.state === "string" ? args.state : "";
 
-    // The settled result text is the tool's rendered text block; parse it back
-    // into the structured payload when it is JSON, else keep it verbatim.
     var resultText = isResult ? contentText(block.content) : "";
+    // Preferred structured path (see the header comment).
+    var view = isResult && block.meta && typeof block.meta === "object" && typeof block.meta.kind === "string"
+      ? block.meta : null;
     var payload = parseJSON(resultText);
-    var answers = payload && payload.answers ? payload.answers : null;
+    var answers = view && view.kind === "decision" && view.answers ? view.answers
+      : payload && payload.answers ? payload.answers : null;
     var answerNames = answers ? Object.keys(answers) : [];
+    var kind = view ? view.kind : answerNames.length > 0 ? "decision" : "text";
+    var sum = view && view.summary ? view.summary : {};
 
     // `__forceOpen` is a test-only escape hatch: the offline render tests mount
     // this view as static markup, where click state cannot be driven. It never
@@ -493,30 +718,47 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     var [showState, setShowState] = useState(false);
 
     var dot = running ? " djev-tvDotRun" : isError ? " djev-tvDotErr" : " djev-tvDotOk";
-    var label = running ? "Jev 判定中…"
+    var label = running
+      ? (toolName === "jev_verify" ? "Jev 实测中…" : toolName === "jev_overview" ? "读取 Jev 总览…"
+        : toolName === "jev_guard_status" ? "读取护栏状态…" : "Jev 判定中…")
       : isError ? "Jev 调用失败"
+      : kind === "overview" ? "Jev 调用总览"
+      : kind === "guard" ? "Jev 护栏状态"
+      : kind === "verify" ? "Jev 实测验证"
       : "Jev 判定完成";
 
-    var meta = [];
-    if (running) meta.push(questions.length + " 个问题");
-    else if (payload && typeof payload.latencyMs === "number") meta.push(Math.round(payload.latencyMs) + " ms");
-    if (payload && typeof payload.estimatedCostUs === "number")
-      meta.push("$" + payload.estimatedCostUs.toFixed(6));
-    if (payload && payload.model) meta.push(String(payload.model));
+    // Header chips: the numbers that matter for this kind of call.
+    var chips = [];
+    if (running) chips.push(questions.length + " 个问题");
+    else if (kind === "decision") {
+      var ms = view ? view.latencyMs : payload && payload.latencyMs;
+      var cost = view ? view.estimatedCostUs : payload && payload.estimatedCostUs;
+      var model = view ? view.model : payload && payload.model;
+      if (typeof ms === "number") chips.push(Math.round(ms) + " ms");
+      if (typeof cost === "number") chips.push("$" + cost.toFixed(6));
+      if (model) chips.push(String(model));
+    } else if (kind === "overview") {
+      chips.push(sum.calls + " 次判定");
+      if (sum.guardDenials) chips.push(sum.guardDenials + " 次拦截");
+      chips.push("$" + Number(sum.totalCostUs || 0).toFixed(6));
+    } else if (kind === "guard") {
+      chips.push(view.enabled ? "已启用" : "未启用");
+      if (view.denyThreshold != null) chips.push("阈值 " + view.denyThreshold);
+    } else if (kind === "verify") {
+      chips.push(view.verified === true ? "实测准确率 " + (view.accuracy == null ? "—" : pct(view.accuracy) + "%") : "未运行");
+    }
 
-    var canShowAnswers = answerNames.length > 0;
-
-    return h("div", { className: "djev-tv", "data-dsh-jev-toolview": "1" },
+    return h("div", { className: "djev-tv", "data-dsh-jev-toolview": "1", "data-dsh-jev-kind": kind },
       h("button", {
         type: "button", className: "djev-tvHead", "aria-expanded": open,
         onClick: function () { setOpen(!open); },
       },
         h("span", { className: "djev-tvDot" + dot }),
         h("span", { className: "djev-tvTitle" }, label),
-        meta.length ? h("span", { className: "djev-tvMeta" }, meta.join(" · ")) : null,
+        chips.length ? h("span", { className: "djev-tvMeta" }, chips.join(" · ")) : null,
         h(Chevron, { open: open })),
       open ? h("div", { className: "djev-tvBody" },
-        state
+        kind === "decision" && state
           ? h("div", null,
               h("p", { className: "djev-ansWhy" },
                 "判定输入" + (state.length > 90 ? "（前 90 字）" : "")),
@@ -534,41 +776,37 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
         running
           ? h("p", { className: "djev-ansWhy" },
               questions.length
-                ? "已提交 " + questions.length + " 个问题：" + questions.map(function (q) { return q && q.name; }).filter(Boolean).join("、")
+                ? "已提交 " + questions.length + " 个问题："
+                  + questions.map(function (q) { return q && q.name; }).filter(Boolean).join("、")
                 : "等待 Jev 返回…")
           : null,
 
-        isError
-          ? h("p", { className: "djev-tvState" }, resultText || "（无错误详情）")
-          : null,
+        isError ? h("p", { className: "djev-tvState" }, resultText || "（无错误详情）") : null,
 
-        !running && !isError && canShowAnswers
-          ? h("div", null, answerNames.map(function (n) {
-              return h(AnswerRow, { key: n, name: n, answer: answers[n] });
-            }))
-          : null,
+        !running && !isError && kind === "overview" ? h(OverviewBody, { meta: view }) : null,
+        !running && !isError && kind === "guard" ? h(GuardBody, { meta: view }) : null,
+        !running && !isError && kind === "verify" ? h(VerifyBody, { meta: view }) : null,
+        !running && !isError && kind === "decision" ? h(DecisionBody, { answers: answers }) : null,
 
-        !running && !isError && !canShowAnswers && questions.length > 0
+        !running && !isError && kind === "decision" && answerNames.length === 0 && questions.length > 0
           ? h("div", null, questions.map(function (q, i) {
               return h("p", { key: i, className: "djev-ansWhy" },
                 (q && q.name ? q.name + " — " : "") + (q && q.instructions ? q.instructions : ""));
             }))
           : null,
 
-        !running && !isError && answerNames.length === 0 && !questions.length
+        !running && !isError && kind === "text"
           ? h("p", { className: "djev-tvState" }, resultText.slice(0, 1200) || "（无输出）")
           : null,
 
-        !running && !isError && payload && answerNames.length > 0
+        !running && !isError && kind === "decision"
           ? h("p", { className: "djev-tvFoot" },
-              payload.usage && typeof payload.usage.input_tokens === "number"
-                ? h("span", null, payload.usage.input_tokens + " input tokens")
-                : null,
-              h("span", null, "真实 API 调用，可审计"))
+              h("span", null, ((view && view.inputTokens)
+                || (payload && payload.usage && payload.usage.input_tokens) || 0) + " input tokens"),
+              h("span", null, view ? "结构化结果（presentationMeta）" : "真实 API 调用，可审计"))
           : null)
         : null);
   }
-
   /**
    * Register the legacy plugin-configuration card.
    *

@@ -1,11 +1,11 @@
 # 验证报告（实测，带日期）
 
 > 本文档只记录**真实 API 运行**的实测数据。方法学固定，数据可复现：
-> \`TYPESAFE_API_KEY=... node bench/bench.mjs\`（结果 JSON 存档于 \`bench/results/\`）。
+> `TYPESAFE_API_KEY=... node bench/bench.mjs`（结果 JSON 存档于 `bench/results/`）。
 
 ## 方法学
 
-- 基准集：内置 \`lib/cases.js\`，23 个用例 / 27 个带标签问题（2026-09-21 冻结，不随结果调整；v0.2.0 起含 guard-destructive / guard-benign 两个护栏判定用例）。
+- 基准集：内置 `lib/cases.js`，23 个用例 / 27 个带标签问题（2026-09-21 冻结，不随结果调整；v0.2.0 起含 guard-destructive / guard-benign 两个护栏判定用例）。
 - 覆盖：noul（紧急、垃圾、毒性、bug、PII、破坏性命令）×12；choice（部门路由、意图、搜索意图、优先级）×11；score（严重度、满意度）×4。
 - 判定规则：noul 以 ≥0.5 为 yes；choice 精确匹配；score 数值相等。
 - 每个用例一次完整 API 调用（state + 该用例全部问题并行），与真实用法一致。
@@ -17,31 +17,54 @@
 
 ### 2026-09-21（run 1，单轮，25 题版）
 
-- **模型**: \`jev-latest\`；**准确率**: **96.0%（24/25）**
+- **模型**: `jev-latest`；**准确率**: **96.0%（24/25）**
 - **延迟**: median **318 ms** / p95 838 ms / min 249 ms / max 1030 ms
 - **成本**: 8,122 input tokens ≈ **$0.000341**
-- 结果文件: \`bench/results/2026-09-21T06-54-54-147Z.json\`
+- 结果文件: `bench/results/2026-09-21T06-54-54-147Z.json`
 
 ### 2026-09-21（run 2，repeat=3 稳定复现，25 题版）
 
 - **准确率**: **96.0%（72/75）** —— 三次运行完全一致
 - **延迟**: median **308 ms** / p95 949 ms / min 251 ms / max 1218 ms
 - **成本**: 24,366 input tokens ≈ **$0.001023**
-- 结果文件: \`bench/results/2026-09-21T06-55-37-978Z.json\`
+- 结果文件: `bench/results/2026-09-21T06-55-37-978Z.json`
 
 ### 2026-09-21（run 3，DSH harness 内 jev_verify 工具实测，27 题版）
 
-- **模型**: \`jev-latest\`；**准确率**: **96.3%（26/27）**
+- **模型**: `jev-latest`；**准确率**: **96.3%（26/27）**
 - **延迟**: median **283 ms** / p95 712 ms / range 237–1078 ms
 - **成本**: 8,696 input tokens ≈ **$0.000365**
 - 备注：基准扩至 23 用例 / 27 问题（新增 2 个护栏判定用例）。
 
 ### 2026-09-21（护栏拦截实测，DSH harness 内）
 
-- 命令 \`remove-item -Recurse -Force <temp>\` → **确定性黑名单规则 "full-dir recursive delete" 拦截**（0 次 Jev 调用）。
+- 命令 `remove-item -Recurse -Force <temp>` → **确定性黑名单规则 "full-dir recursive delete" 拦截**（0 次 Jev 调用）。
 - 命令 "permanently wipe all staging data and delete every row from every table" → **Jev 判定高风险，置信度 91% > 阈值 0.8，拦截**（1 次 Jev 调用）。
-- 无辜命令 \`write-host hello\` → 确定性判定 clear，零调零耗放行。
-- 全部计数经 \`jev_guard_status\` 审计（checks=2、Jev calls=1、deterministic=1、Jev denials=1、预算 49/50 剩余）。
+- 无辜命令 `write-host hello` → 确定性判定 clear，零调零耗放行。
+- 全部计数经 `jev_guard_status` 审计（checks=2、Jev calls=1、deterministic=1、Jev denials=1、预算 49/50 剩余）。
+
+### 2026-09-28（v0.7.0 回归：配置解包修复，headless 实例实测）
+
+背景：修掉一个会让插件**静默失效**的真实根因——schemastery 的 `volatile()` 字段（`apiKeyEnv` 等）在插件里被当普通值读取，
+实际拿到的是 `{ get(), [Symbol(cosmokit.volatile.write)] }` 引用对象。后果不止一处：
+
+- `jev_overview` 直接抛 `credential ref "[object Object]" must match /^[A-Za-z_][A-Za-z0-9_]*$/`；
+- `config.enabled === false` 永不成立（插件关不掉）；
+- `autoGuard.enabled === true` 永不成立（护栏静默未武装，`jev_guard_status` 返回 `tools: []` / `denyThreshold: null`）；
+- `dashboard.enabled` 永不成立；`maxQuestionsPerCall` 变对象（`Math.max` → `NaN`）。
+
+修复：新增 `unwrapField()` / `normalizeConfig()`（识别 `Symbol.for("cosmokit.volatile.write")` 并 `get()` 解包，深度 ≤6 递归），
+ `resolveOptions()` 改为永不抛（非法凭据名回落 `DEFAULT_API_KEY_ENV`），`opts()` 加 try/catch 兜底。
+
+验证（headless 实例，profile `jevtest`，`dsh --profile jevtest`）：
+
+- 启动日志：`[dsh-jev-verify] settings namespace registered: jev-verify | schema: present | scope: object`
+- `jev_guard_status`：`auto-guard ENABLED`、`guarded tools: bash, pwsh, run_code, terminal`、`deny threshold: 0.8`、`session Jev budget left: 50`（修复前同一实例返回 `tools: []`、`denyThreshold: null`）。
+- `jev_overview`：正常返回看板（`model jev-latest · Key ✓ · 护栏 开启 · 阈值 0.8`），不再抛凭据错误。
+- 单元测试：`node --test "test/*.test.mjs"` → **19/19 通过**（新增 `test/config.test.mjs` 7 组用例锁定 volatile 解包，`test/present.test.mjs` 锁定四工具的 `presentationMeta` 投影）。
+
+同一版本还落地两项界面改动：四个工具的 `presentationMeta` 结构化投影（对话内卡片改读 `block.meta`，不再依赖文本解析），
+以及覆盖全部配置字段的设置卡片（凭据 / 工具 / 自动护栏 / 看板四组，含校验与保存）。
 
 ### 唯一误标（所有运行一致出现）
 
@@ -63,9 +86,9 @@
 ## 复现步骤
 
 1. 注册 Key：https://console.typesafe.ai/keys（免费）
-2. \`dsh plugin --profile web add dsh-jev-verify\`（或直接 \`npm pack\` 后本地安装）
-3. \`cd node_modules/dsh-jev-verify && TYPESAFE_API_KEY=... node bench/bench.mjs [--repeat 3]\`
-4. 结果 JSON 自动保存到 \`bench/results/\`；也可让 Agent 执行 \`jev_verify\` 获得同等报告。
+2. `dsh plugin --profile web add dsh-jev-verify`（或直接 `npm pack` 后本地安装）
+3. `cd node_modules/dsh-jev-verify && TYPESAFE_API_KEY=... node bench/bench.mjs [--repeat 3]`
+4. 结果 JSON 自动保存到 `bench/results/`；也可让 Agent 执行 `jev_verify` 获得同等报告。
 
 ## 2026-09-23（GUI 卡片实测：设置 → 插件 → 插件配置）
 
