@@ -5,7 +5,7 @@
 
 ## 方法学
 
-- 基准集：内置 `lib/cases.js`，23 个用例 / 27 个带标签问题（2026-09-21 冻结，不随结果调整；v0.2.0 起含 guard-destructive / guard-benign 两个护栏判定用例）。
+- 基准集：内置 `lib/cases.js`，27 个用例 / 27 个带标签问题（标签集自 2026-09-21 起冻结，不随结果调整；含 guard-destructive / guard-benign 两个护栏判定用例）。
 - 覆盖：noul（紧急、垃圾、毒性、bug、PII、破坏性命令）×12；choice（部门路由、意图、搜索意图、优先级）×11；score（严重度、满意度）×4。
 - 判定规则：noul 以 ≥0.5 为 yes；choice 精确匹配；score 数值相等。
 - 每个用例一次完整 API 调用（state + 该用例全部问题并行），与真实用法一致。
@@ -34,7 +34,7 @@
 - **模型**: `jev-latest`；**准确率**: **96.3%（26/27）**
 - **延迟**: median **283 ms** / p95 712 ms / range 237–1078 ms
 - **成本**: 8,696 input tokens ≈ **$0.000365**
-- 备注：基准扩至 23 用例 / 27 问题（新增 2 个护栏判定用例）。
+- 备注：该轮基准为 27 个带标签问题（含新增的 2 个护栏判定用例）。
 
 ### 2026-09-21（护栏拦截实测，DSH harness 内）
 
@@ -202,6 +202,14 @@
   客户端 `0.6.0` 加载、`data-dsh-jev-card=registered:toolview`、**控制台错误 0 条**；
   设置 →「内置插件 → 全局插件」列出 `jev-verify`（**已启用**）。
 - 真实 API 回归：`node bench/bench.mjs` → 准确率 **96.3%（26/27）**、中位 **321 ms**、$0.000365。
+
+### 2026-09-28（run 4，v0.7.2 发布前复测：27 题基准，独立 CLI）
+
+- **模型**: `jev-latest`；**准确率**: **96.3%（26/27）** —— 与 run 3 一致，唯一误标仍是已记录的边界用例 `severity-low`（期望 score 0，返回 0.01，置信度 0.99）。
+- **延迟**: median **484 ms** / p95 5023 ms / min 382 ms / max 9909 ms（单轮 27 次调用，含网络；比 run 3 慢，属网络波动）。
+- **成本**: 8,696 input tokens ≈ **$0.000365**，822 output tokens，总墙钟 36.3 s。
+- 结果文件: `bench/results/2026-09-28T09-27-57-654Z.json`，终端全文 `bench/run4.log`。
+- 同期修正：`jev_verify` 工具描述此前写作「24 questions across 15+ cases」，与 `lib/cases.js`（27 用例 / 27 题）不符；v0.7.2 已改为 27 题并列出覆盖类别，README / market PR 稿 / 本报告同步更正。
 
 ## 与 dsh-jev/官方博客声明的边界
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-jev-verify",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Jev (TypeSafe System One decision model) for DeepSeek Harness: fast decision tools (choice/score/noul, ~300ms parallel), auto-guard (deterministic + Jev risk/loop), in-chat board (jev_overview). Boot-stable by design: every registration is quarantined; a failure degrades one feature, never the profile.",
   "type": "module",
   "main": "lib/index.js",

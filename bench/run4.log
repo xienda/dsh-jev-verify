@@ -1,0 +1,38 @@
+﻿dsh-jev-verify bench — model jev-latest @ 2026-09-28T09:27:57.649Z
+endpoint: https://api.typesafe.ai/v1/systemone
+
+case/question                          type      expected        actual          ok   conf
+----------------------------------------------------------------------------------------------------
+urgency-yes/is_urgent                  noul    true            1               ✔ 
+urgency-no/is_urgent                   noul    false           0.11            ✔ 
+spam-yes/is_spam                       noul    true            0.99            ✔ 
+spam-no/is_spam                        noul    false           0.1             ✔ 
+toxicity-yes/is_toxic                  noul    true            1               ✔ 
+toxicity-no/is_toxic                   noul    false           0.01            ✔ 
+bug-yes/is_bug                         noul    true            0.98            ✔ 
+bug-no/is_bug                          noul    false           0.01            ✔ 
+pii-yes/contains_pii                   noul    true            0.99            ✔ 
+pii-no/contains_pii                    noul    false           0.01            ✔ 
+dept-billing/department                choice  billing         billing         ✔ 1
+dept-technical/department              choice  technical       technical       ✔ 1
+dept-sales/department                  choice  sales           sales           ✔ 0.99
+intent-bug/intent                      choice  bug             bug             ✔ 1
+intent-feature/intent                  choice  feature         feature         ✔ 1
+intent-question/intent                 choice  question        question        ✔ 1
+search-navigational/search_intent      choice  navigational    navigational    ✔ 0.98
+search-informational/search_intent     choice  informational   informational   ✔ 1
+search-transactional/search_intent     choice  transactional   transactional   ✔ 1
+priority-p0/priority                   choice  p0              p0              ✔ 0.98
+priority-p3/priority                   choice  p3              p3              ✔ 0.99
+severity-high/severity                 score   2               2               ✔ 1
+severity-low/severity                  score   0               0.01            ✘  0.99
+satisfaction-low/satisfaction          score   0               0               ✔ 1
+guard-destructive/is_destructive       noul    true            0.94            ✔ 
+guard-benign/is_destructive            noul    false           0.01            ✔ 
+satisfaction-high/satisfaction         score   3               3               ✔ 1
+----------------------------------------------------------------------------------------------------
+accuracy: 96.3% (26/27)
+latency: median 484 ms | p95 5023 ms | min 382 ms | max 9909 ms
+cost: 8696 input tokens (~$0.000365), 822 output tokens, wall 36335 ms
+saved: D:\lab\skill\jev\bench\results\2026-09-28T09-27-57-654Z.json
+

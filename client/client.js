@@ -14,7 +14,7 @@
  * Hand-written, build-free, defensive: any failure degrades only this card.
  */
 window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
-  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.7.1";
+  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.7.2";
   "use strict";
   var module = { exports: {} };
   var react = require("react");

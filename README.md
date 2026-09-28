@@ -12,7 +12,7 @@ opt-in **auto-guard** (risk + loop checks), and makes sure the claims are
 | Tool | What it does |
 | --- | --- |
 | `jev_decision` | Choice / Score / Noul questions against a `state` in ONE call. Returns typed answers, confidence, probabilities, token usage, measured latency and estimated cost. |
-| `jev_verify` | Runs the built-in labeled benchmark (23 cases / 27 questions, incl. guard verdicts) against the **live** API and returns measured accuracy, median/p95 latency, calibration and cost. The anti-deception self-test. |
+| `jev_verify` | Runs the built-in labeled benchmark (27 labeled questions, incl. guard verdicts) against the **live** API and returns measured accuracy, median/p95 latency, calibration and cost. The anti-deception self-test. |
 | `jev_guard_status` | Audit the auto-guard: counts, guarded tools, thresholds, budget — guard behavior is always transparent. |
 
 **Auto-guard mode** (opt-in `autoGuard.enabled`): before shell-like tool calls
@@ -29,6 +29,16 @@ instead of blocking. Every verdict is auditable via `jev_guard_status`.
 - every `jev_decision` result includes the model, latency and token usage, so each call is auditable;
 - `jev_verify` refuses to report numbers it did not measure;
 - the benchmark CLI (`bench/bench.mjs`) is dependency-free and reproducible with any key.
+
+## What's new in 0.7.2
+
+- **Benchmark claims now match the code.** `jev_verify`'s tool description said
+  "24 questions across 15+ cases" while `lib/cases.js` has held 27 labeled
+  questions (27 cases, guard verdicts included) since v0.2.0. The description,
+  README, market PR copy and the verification report now all state 27.
+- **Re-measured on 2026-09-28** (run 4, before this release): 96.3% (26/27) —
+  the same single recorded boundary miss as run 3 — 8,696 input tokens ≈
+  $0.000365, median 484 ms (network-dependent). Full terminal log: `bench/run4.log`.
 
 ## What's new in 0.7.1
 
