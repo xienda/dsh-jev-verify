@@ -36,7 +36,7 @@ Jev (TypeSafe AI, launched 2026-09-15) is a fast decision model for agent worklo
 - `npm test`: 19/19 passing (boot, client render, tool views, settings, dashboard, guard, presentation projections).
 
 ## Checklist
-- [x] npm package id verified available (published: `dsh-jev-verify@0.7.0`)
+- [x] npm package id verified available (published: `dsh-jev-verify@0.7.1`)
 - [x] packaged tarball dry-run OK
 - [x] local dsh install + tool registration tested
 - [x] verification numbers measured against the live API (dated in docs/verification.md)

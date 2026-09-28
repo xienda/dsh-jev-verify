@@ -30,8 +30,14 @@ instead of blocking. Every verdict is auditable via `jev_guard_status`.
 - `jev_verify` refuses to report numbers it did not measure;
 - the benchmark CLI (`bench/bench.mjs`) is dependency-free and reproducible with any key.
 
-## What's new in 0.7.0
+## What's new in 0.7.1
 
+- **Docs sync (0.7.1 ships 0.7.0 code).** The verification report now carries
+  the complete measured history instead of only the latest run: the 2026-09-21
+  benchmark/guard runs, the 2026-09-23 GUI card, settings-card redesign and
+  in-chat tool views, the 2026-09-26 two-generation settings-API compatibility
+  work, and the 2026-09-28 v0.7.0 regression on a headless profile. `docs/verification.md`
+  is the full 208-line record; no behavioural change versus 0.7.0.
 - **Structured in-chat views for every tool.** Tool results now carry a
   `presentationMeta` projection (`kind: decision | overview | guard | verify`),
   so the conversation renders a decision card, a guard board and a benchmark
