@@ -211,6 +211,16 @@
 - 结果文件: `bench/results/2026-09-28T09-27-57-654Z.json`，终端全文 `bench/run4.log`。
 - 同期修正：`jev_verify` 工具描述此前写作「24 questions across 15+ cases」，与 `lib/cases.js`（27 用例 / 27 题）不符；v0.7.2 已改为 27 题并列出覆盖类别，README / market PR 稿 / 本报告同步更正。
 
+### 2026-09-29（v0.7.3：`jev_choose` 多方案择优，新增工具）
+
+- 需求来源：用户提出「harness 面对多种方案时是否可以让 Jev 帮忙择优」→ 新增 `jev_choose`（2–10 候选，逐方案一次调用：契合度 score 0–3 + 风险 noul，综合分 `fit/3 × (1−risk)` 排序推荐）。
+- 代码落点：新模块 `lib/counsel.js`（createCounselModule，**并行**逐方案 requestSystemOne，Promise.all）；`lib/index.js` 注册 `jev_choose`（timeout = 单次 ×3 且 ≥30s），system prompt 注入「多方案叉路先调它」，overview recent 与 `lib/dashboard.js` summary 把 `kind: choose` 并入决策统计；`client/client.js` 新增 ChooseBody 排名表渲染（9 处编辑）。后续补两处诚实性修正：Jev 未返回 fit 分时 risk 不再落默认 0.5（与 fit 同显「—」，综合分不伪装）；recommended 为空时提示「请检查 API 响应」。
+- 验证：`node --check` 四个文件全绿；`lib/index.js` 模块导入冒烟通过；`createCounselModule` 用 mock 传输层单测（3 候选、含一个「契合高但风险 0.9」陷阱项 → 综合分正确压到 0.1 不被推荐；参数校验 2..10 / 非空 / ≤800 字符各分支抛错正确；formatChoose 输出格式核对）。
+- 部署：五个文件（lib/counsel.js、lib/index.js、lib/dashboard.js、client/client.js、package.json）同步到 `D:\lab\jev` 与 web profile pnpm store，MD5 三处全等；宿主进程重启后生效，重启前 jev_choose 不可调用（旧代码常驻内存）。client.js 补 0.7.3 版本号后需重部署并对齐 MD5（见 git HEAD 核对记录）。
+- 现场插曲：压缩上下文时连续两次被自家护栏确定性规则拦截（摘要文本引用了规则样例词，如关机、递归删除类英文样例），改写措辞后放行——护栏会扫描工具调用参数文本，对描述性文字存在误报可能，已记为用户可见行为。
+- 真实 E2E（2026-09-29，`bench/choose-e2e.mjs`）：从 `~/.dsh/.env` 读 key 直调 `https://api.typesafe.ai/v1/systemone`（shim 模拟 requestSystemOne 的 `{body, latencyMs}` 信封；首版 shim 返回裸 JSON 导致 fit 全 null，`bench/dump-raw.mjs` 核实真实响应形状后修正）。三候选用真实发布决策点验证：直接发布 fit 0.1/3、风险 89%、综合 0.4%、置信 90%（被打压）；**先验证后发布 fit 2/3、风险 24%、综合 51%、置信 45%（推荐，两次运行稳定复现）**；只发 npm fit 1.09/3、风险 56%、综合 16%。总耗时 3495 ms → 并行化后 2989 ms；成本 $0.00006741（1605 in + 99 out tokens）。
+- 新增测试：`test/counsel.test.mjs`（7 用例：排序+陷阱项、并行性 maxActive、参数校验、context 截断、fit 缺失降级、formatChoose 快照、latency 聚合）；`test/toolview.test.mjs` 追加 choose 渲染用例。本地 `node --test` 26 用例结果待宿主恢复后重跑确认（宿主子进程故障暂挂，见发布记录）。
+
 ## 与 dsh-jev/官方博客声明的边界
 
 - 200x 提速、1/400 成本等对比数字依赖具体基线模型与工作负载，本插件不搬运这些相对值，只发布可直接核验的绝对值（延迟、成本、准确率、校准）。

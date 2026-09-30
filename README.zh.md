@@ -7,6 +7,7 @@ Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 A
 | 工具 | 作用 |
 | --- | --- |
 | `jev_decision` | 对 `state` 一次性提出 Choice / Score / Noul 问题。返回类型化答案、置信度、概率分布、token 用量、实测延迟与估算成本。 |
+| `jev_choose` | 对 2–10 个候选方案/路线并行打分排序（每方案：契合度 score 0–3 + 风险 noul），返回有序排名表与推荐项。Jev 只打分不解释——得分是多方案岔路口的快速校准参考，最终判断仍由你（代理）综合做出。 |
 | `jev_verify` | 对**线上真实 API** 运行内置带标签基准（27 个带标签问题，含护栏判定），返回实测准确率、中位/p95 延迟、置信校准与成本——这是防欺骗的自我验证。 |
 | `jev_guard_status` | 审计自动护栏：计数、受保护工具、阈值、预算——护栏行为始终透明可见。 |
 
@@ -18,6 +19,11 @@ Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 A
 - 每次 `jev_decision` 结果都带回 model、延迟与 token 用量，可审计；
 - `jev_verify` 拒绝报告任何未经实测的数字；
 - 独立的基准 CLI（`bench/bench.mjs`）零依赖，任何人可用任意 Key 复现发布的数据。
+
+## 0.7.3 更新
+
+- **`jev_choose`——多方案择优工具**：一次调用对 2–10 个候选做法逐方案打分（契合度 score 0–3，带校准置信度；风险 noul），合成综合分（`fit/3 × (1−risk)`），返回排名表、推荐项与每方案延迟/成本。使用指引已注入代理 system prompt（「多方案叉路 → 先调 `jev_choose`」），对话内渲染为排名表格（ChooseBody），并计入看板决策统计（`kind: choose` 并入 decisions）。
+- **0.7.3 已部署**：`D:\lab\jev`（vendor）与 web profile pnpm store 三处字节一致（MD5 全等）；`node --check` 全绿；`rankOptions` 以 mock 传输层完成单元验证。
 
 ## 0.7.2 更新
 

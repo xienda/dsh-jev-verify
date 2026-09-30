@@ -176,4 +176,32 @@ const verifyEmpty = renderToStaticMarkup(React.createElement(verifyEntry.Comp, {
 }));
 assert.ok(/no TYPESAFE_API_KEY/.test(verifyEmpty), "an unrun verification says so instead of faking numbers");
 
-console.log("PASS: toolview renders running / settled / error states — and every presentationMeta kind (decision/overview/guard/verify) with real data");
+
+// ---- jev_choose kind -------------------------------------------------------
+const chooseEntry = entries.find((e) => e.opts.key === "jev_choose");
+assert.ok(chooseEntry, "jev_choose toolview registered");
+const chooseView = renderToStaticMarkup(React.createElement(chooseEntry.Comp, {
+  toolName: "jev_choose", __forceOpen: true,
+  block: {
+    kind: "tool-result", callId: "c6", call: { name: "jev_choose", argsRaw: "{}" },
+    content: [{ type: "text", text: "jev_choose | model=jev-1.13.0 | 3 个候选" }], isError: false, subCalls: [],
+    meta: {
+      kind: "choose", model: "jev-1.13.0", optionCount: 3, latencyMs: 2100, estimatedCostUs: 0.000067,
+      ranking: [
+        { index: 0, label: "直接发布", fit: 0.1, risk: 0.89, composite: 0.004, confidence: 0.9, latencyMs: 900 },
+        { index: 1, label: "先验证后发布", fit: 2, risk: 0.24, composite: 0.507, confidence: 0.45, latencyMs: 500 },
+        { index: 2, label: "只发 npm", fit: 1.09, risk: 0.56, composite: 0.16, confidence: 0.64, latencyMs: 700 },
+      ],
+      recommended: 1,
+    },
+  },
+}));
+assert.ok(/Jev 方案选型/.test(chooseView), "choose title");
+assert.ok(/先验证后发布/.test(chooseView), "option label rendered");
+assert.ok(/推荐/.test(chooseView), "recommended option highlighted");
+assert.ok(chooseView.includes("契合") && chooseView.includes("2/3"), "fit column header and value shown");
+assert.ok(chooseView.includes("风险") && chooseView.includes("24%"), "risk column header and value shown");
+assert.ok(chooseView.includes("综合") && chooseView.includes("51%"), "composite column header and value shown");
+assert.ok(chooseView.includes("置信") && chooseView.includes("45%"), "confidence column header and value shown");
+
+console.log("PASS: toolview renders running / settled / error states — and every presentationMeta kind (decision/overview/guard/verify/choose) with real data");

@@ -14,7 +14,7 @@
  * Hand-written, build-free, defensive: any failure degrades only this card.
  */
 window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
-  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.7.2";
+  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.7.3";
   "use strict";
   var module = { exports: {} };
   var react = require("react");
@@ -111,6 +111,13 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     ".djev-recentMain{flex:1;color:var(--dsw-alias-label-secondary);word-break:break-word}",
     ".djev-recentTs{color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}",
     ".djev-tvFoot{border-top:.5px solid var(--dsw-alias-border-l2);display:flex;gap:12px;flex-wrap:wrap;padding:8px 12px;color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}",
+    ".djev-table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}",
+    ".djev-table th,.djev-table td{border-bottom:.5px solid var(--dsw-alias-border-l2);padding:5px 8px;text-align:left;vertical-align:top}",
+    ".djev-table th{color:var(--dsw-alias-label-tertiary);font-weight:500;font-size:11px}",
+    ".djev-table td.djev-tdIdx{color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,Menlo,monospace}",
+    ".djev-table td.djev-tdLabel{max-width:320px;word-break:break-word}",
+    ".djev-rowRec td{background:var(--dsw-alias-bg-l2,#0000000d);font-weight:600}",
+    ".djev-noteChoose{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}",
   ].join("");
 
   var CSS_TAG_ID = "dsh-jev-verify/client-card.css";
@@ -662,6 +669,36 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       }),
       m.ranAt ? h("p", { className: "djev-tvFoot" }, h("span", null, "实测时间 " + m.ranAt)) : null);
   }
+  /** jev_choose: ranked candidate table with the recommended pick highlighted. */
+  function ChooseBody(props) {
+    var m = props.meta || {};
+    var ranking = m.ranking || [];
+    var rows = ranking.map(function (r) {
+      return h("tr", { key: r.index, className: r.index === m.recommended ? "djev-rowRec" : null },
+        h("td", { className: "djev-tdIdx" }, "#" + r.index),
+        h("td", { className: "djev-tdLabel" }, r.label),
+        h("td", null, r.fit == null ? "—" : r.fit + "/3"),
+        h("td", null, r.risk == null ? "—" : Math.round(r.risk * 100) + "%"),
+        h("td", null, r.composite == null ? "—" : Math.round(r.composite * 100) + "%"),
+        h("td", null, r.confidence == null ? "—" : pct(r.confidence) + "%"));
+    });
+    var rec = m.recommended == null ? null : (ranking[m.recommended] || null);
+    return h("div", null,
+      ranking.length
+        ? h("table", { className: "djev-table" },
+            h("thead", null, h("tr", null,
+              h("th", null, "#"), h("th", null, "候选方案"),
+              h("th", null, "契合"), h("th", null, "风险"),
+              h("th", null, "综合"), h("th", null, "置信"))),
+            h("tbody", null, rows))
+        : h("p", { className: "djev-tvState" }, m.reason || "（无评分数据）"),
+      rec ? h("p", { className: "djev-noteChoose" },
+          "推荐：#" + rec.index + " " + rec.label + " — Jev 只做特征打分，最终判断由你综合做出")
+        : null,
+      h("p", { className: "djev-tvFoot" },
+        h("span", null, (m.optionCount || 0) + " 个候选"),
+        h("span", null, "结构化结果（presentationMeta）")));
+  }
   /**
    * The inline view for one Jev tool call.
    *
@@ -699,6 +736,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       });
     }
     var state = typeof args.state === "string" ? args.state : "";
+    var optCount = Array.isArray(args.options) ? args.options.length : 0;
 
     var resultText = isResult ? contentText(block.content) : "";
     // Preferred structured path (see the header comment).
@@ -719,17 +757,18 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
 
     var dot = running ? " djev-tvDotRun" : isError ? " djev-tvDotErr" : " djev-tvDotOk";
     var label = running
-      ? (toolName === "jev_verify" ? "Jev 实测中…" : toolName === "jev_overview" ? "读取 Jev 总览…"
+      ? (toolName === "jev_choose" ? "Jev 方案选型中…" : toolName === "jev_verify" ? "Jev 实测中…" : toolName === "jev_overview" ? "读取 Jev 总览…"
         : toolName === "jev_guard_status" ? "读取护栏状态…" : "Jev 判定中…")
       : isError ? "Jev 调用失败"
       : kind === "overview" ? "Jev 调用总览"
       : kind === "guard" ? "Jev 护栏状态"
       : kind === "verify" ? "Jev 实测验证"
+      : kind === "choose" ? "Jev 方案选型"
       : "Jev 判定完成";
 
     // Header chips: the numbers that matter for this kind of call.
     var chips = [];
-    if (running) chips.push(questions.length + " 个问题");
+    if (running) chips.push((optCount ? optCount + " 个候选" : questions.length + " 个问题"));
     else if (kind === "decision") {
       var ms = view ? view.latencyMs : payload && payload.latencyMs;
       var cost = view ? view.estimatedCostUs : payload && payload.estimatedCostUs;
@@ -737,6 +776,13 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       if (typeof ms === "number") chips.push(Math.round(ms) + " ms");
       if (typeof cost === "number") chips.push("$" + cost.toFixed(6));
       if (model) chips.push(String(model));
+    } else if (kind === "choose") {
+      var ms2 = view ? view.latencyMs : payload && payload.latencyMs;
+      var cost2 = view ? view.estimatedCostUs : payload && payload.estimatedCostUs;
+      var model2 = view ? view.model : payload && payload.model;
+      if (typeof ms2 === "number") chips.push(Math.round(ms2) + " ms");
+      if (typeof cost2 === "number") chips.push("$" + cost2.toFixed(6));
+      if (model2) chips.push(String(model2));
     } else if (kind === "overview") {
       chips.push(sum.calls + " 次判定");
       if (sum.guardDenials) chips.push(sum.guardDenials + " 次拦截");
@@ -787,6 +833,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
         !running && !isError && kind === "guard" ? h(GuardBody, { meta: view }) : null,
         !running && !isError && kind === "verify" ? h(VerifyBody, { meta: view }) : null,
         !running && !isError && kind === "decision" ? h(DecisionBody, { answers: answers }) : null,
+        !running && !isError && kind === "choose" ? h(ChooseBody, { meta: view }) : null,
 
         !running && !isError && kind === "decision" && answerNames.length === 0 && questions.length > 0
           ? h("div", null, questions.map(function (q, i) {
@@ -799,7 +846,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
           ? h("p", { className: "djev-tvState" }, resultText.slice(0, 1200) || "（无输出）")
           : null,
 
-        !running && !isError && kind === "decision"
+        !running && !isError && (kind === "decision" || kind === "choose")
           ? h("p", { className: "djev-tvFoot" },
               h("span", null, ((view && view.inputTokens)
                 || (payload && payload.usage && payload.usage.input_tokens) || 0) + " input tokens"),
@@ -841,7 +888,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
    */
   function registerToolViews(ctx) {
     ctx.slots.inject("tool.call.toolview", function* () {
-      var names = ["jev_decision", "jev_overview", "jev_guard_status", "jev_verify"];
+      var names = ["jev_decision", "jev_choose", "jev_overview", "jev_guard_status", "jev_verify"];
       for (var i = 0; i < names.length; i++) {
         yield ctx.slots.register(
           {

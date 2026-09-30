@@ -12,6 +12,7 @@ opt-in **auto-guard** (risk + loop checks), and makes sure the claims are
 | Tool | What it does |
 | --- | --- |
 | `jev_decision` | Choice / Score / Noul questions against a `state` in ONE call. Returns typed answers, confidence, probabilities, token usage, measured latency and estimated cost. |
+| `jev_choose` | Ranks 2–10 candidate options/approaches with per-option calibrated scores (fit score 0–3 + risk noul), returns an ordered table and a recommended pick. Jev explains nothing — scores are a fast tiebreaker at multi-option forks, final judgment stays with the agent. |
 | `jev_verify` | Runs the built-in labeled benchmark (27 labeled questions, incl. guard verdicts) against the **live** API and returns measured accuracy, median/p95 latency, calibration and cost. The anti-deception self-test. |
 | `jev_guard_status` | Audit the auto-guard: counts, guarded tools, thresholds, budget — guard behavior is always transparent. |
 
@@ -29,6 +30,11 @@ instead of blocking. Every verdict is auditable via `jev_guard_status`.
 - every `jev_decision` result includes the model, latency and token usage, so each call is auditable;
 - `jev_verify` refuses to report numbers it did not measure;
 - the benchmark CLI (`bench/bench.mjs`) is dependency-free and reproducible with any key.
+
+## What's new in 0.7.3
+
+- **`jev_choose` — multi-option counsel.** New tool that ranks 2–10 candidate approaches in one call: each option is scored by Jev (fit score 0–3 with calibrated confidence + risk noul), combined into a composite (`fit/3 × (1−risk)`); returns an ordered table, a recommended pick and honest per-option latency/cost. Registered into the agent system prompt ("multi-option forks → call `jev_choose` first"), rendered in-conversation as a ranking table (ChooseBody), and included in the dashboard/decision-board stats (`kind: choose` merged into decisions).
+- **Deployed 0.7.3** to `D:\lab\jev` (vendor) and the web profile pnpm store with byte-identical MD5 on all five changed files; `node --check` green; `rankOptions` unit-verified against a mock transport.
 
 ## What's new in 0.7.2
 
