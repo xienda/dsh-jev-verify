@@ -38,6 +38,7 @@ const byName = new Map(tools.map((t) => [t.name, t]));
 
 const KINDS = {
   jev_decision: "decision",
+  jev_choose: "choose",
   jev_overview: "overview",
   jev_guard_status: "guard",
   jev_verify: "verify",

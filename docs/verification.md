@@ -221,6 +221,16 @@
 - 真实 E2E（2026-09-29，`bench/choose-e2e.mjs`）：从 `~/.dsh/.env` 读 key 直调 `https://api.typesafe.ai/v1/systemone`（shim 模拟 requestSystemOne 的 `{body, latencyMs}` 信封；首版 shim 返回裸 JSON 导致 fit 全 null，`bench/dump-raw.mjs` 核实真实响应形状后修正）。三候选用真实发布决策点验证：直接发布 fit 0.1/3、风险 89%、综合 0.4%、置信 90%（被打压）；**先验证后发布 fit 2/3、风险 24%、综合 51%、置信 45%（推荐，两次运行稳定复现）**；只发 npm fit 1.09/3、风险 56%、综合 16%。总耗时 3495 ms → 并行化后 2989 ms；成本 $0.00006741（1605 in + 99 out tokens）。
 - 新增测试：`test/counsel.test.mjs`（7 用例：排序+陷阱项、并行性 maxActive、参数校验、context 截断、fit 缺失降级、formatChoose 快照、latency 聚合）；`test/toolview.test.mjs` 追加 choose 渲染用例。本地 `node --test` 26 用例结果待宿主恢复后重跑确认（宿主子进程故障暂挂，见发布记录）。
 
+### 2026-09-30（v0.7.4：引导段真实注册、描述精化，并修掉 0.7.3 的 `jev_choose` 注册缺陷）
+
+- 需求来源：用户问「如何让 harness 主动使用 jev」。根因（宿主源码实测）：`@deepseek-ai/dsh-system-prompt/lib/index.js:238-241` 的 `section()` 在 `!Number.isFinite(order)` 时抛 `TypeError: prompt section "<name>" order must be a finite number`，而本代 DSH 的 `SECTION_ORDERS`（:10-42）**没有 TOOL_JEV 槽位**（已分配槽位止于 TOOL_REPORT=2900，随后是 TOOLS_SDK=5000）。0.7.3 把 `getSectionOrder("TOOL_JEV")` 的 `undefined` 直接交给 `section()` → 抛错 → 被 `safe("system-prompt")` 吞掉 → **引导段从未注册**，模型只看得到工具描述，自然不会主动调用。
+- 修复：`guidanceText(config)` 生成逐工具触发规则（实测 autoGuard 关闭 717 字符 / 开启 838 字符）；order 解析链 `getSectionOrder("TOOL_JEV")` → `guidance.order` → `DEFAULT_GUIDANCE_ORDER=3000`；注册段名 `tool:jev`，且 `ctx.tools.get("jev_decision", scope) === undefined` 时文本为空（工具未注册则不留空引导）；成功日志 `[dsh-jev-verify] system prompt: guidance registered | section tool:jev | order 3000 | chars 838`。新增 `guidance` 配置组（enabled / order / extra），均标记 volatile 以便 GUI 编辑。
+- 第二个真实缺陷（同段发现）：**`jev_choose` 自 0.7.3 起在任何宿主中都未注册成功** —— 其 `options` 参数声明了 `minItems`/`maxItems`，宿主的值模式 DSL 拒绝：`JsonSchemaError: unsupported JSON schema: parameters.options.minItems is not supported by the value schema DSL`；`defineTool` 抛错被单工具隔离吞掉（`safe()` 只打 `logger.warn`），而当时的 boot 测试只断言 4 个工具，所以 0.7.3 发布了一个任何宿主都调不到的主打功能。修复：删掉这两个关键字，2–10 个候选 / 每个 ≤800 字符 / context ≤2000 字符的约束由 `lib/counsel.js` 的 `validateOptions` 在运行时保证。
+- 三个诚实性/健壮性修正：① `choosePresentation(value)` 改为永不抛且 **JSON 可逆**（presentationMeta 会在 running/failed 时被投影，`undefined` 字段会在 JSON round-trip 中消失 → 只复制「已定义」的键）；② `formatChoose(value)` 对非对象返回 `jev_choose | 尚无结果（仍在运行或已失败）`；③ `test/boot.test.mjs` 的 fakeCtx 改为**镜像真实宿主契约**（`section()` 拒绝非有限 order；`getSectionOrder()` 只认 TOOL_GOAL），使「order 为有限数」这一曾经静默失败的契约进入回归测试。
+- 验证：`npm test` **26/26 全绿**（新增 PASS 3：引导段注册、order 3000、文本 >300 字符且含五个工具名与「70-500ms」、护栏关闭时不含护栏说明行；PASS 4：`guidance.order:4200` 生效、`maxQuestionsPerCall:7` 插值出「1-7 个并行原子判定」、`extra` 原样追加、`guidance.enabled:false` 不注册）。
+- 真实 API E2E（`bench/choose-e2e.mjs`，key 取自 `~/.dsh/.env`，从未打印）：三候选真实打分 → 推荐 #1「先验证后发布」契合 1.93/3、风险 23%、综合 50%、置信 41%；陷阱项「直接发布」契合 0.11/3、风险 90%、综合 0.4%（被正确打压）；「只发 npm」契合 1.03/3、风险 56%、综合 15%。总 895 ms，成本 $0.0000674（1605 in + 99 out），模型 jev-1.13.0。**这正是 0.7.3 从未被真实跑通过的那条代码路径。**
+- 备注：宿主进程重启前工具面仍是旧快照（重启前的会话里 `jev_choose` 不可调用），重启后五个工具 + 引导段才生效。
+
 ## 与 dsh-jev/官方博客声明的边界
 
 - 200x 提速、1/400 成本等对比数字依赖具体基线模型与工作负载，本插件不搬运这些相对值，只发布可直接核验的绝对值（延迟、成本、准确率、校准）。

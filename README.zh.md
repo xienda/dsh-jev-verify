@@ -4,12 +4,13 @@
 
 Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 API 调用**返回**带校准概率的类型化判定**（官方宣称 ~70–500ms）。本插件把它封装成 Agent 工具，附加可选的**自动护栏**（风险/循环检测），并且坚持「验证过的才叫有效」：
 
-| 工具 | 作用 |
-| --- | --- |
-| `jev_decision` | 对 `state` 一次性提出 Choice / Score / Noul 问题。返回类型化答案、置信度、概率分布、token 用量、实测延迟与估算成本。 |
-| `jev_choose` | 对 2–10 个候选方案/路线并行打分排序（每方案：契合度 score 0–3 + 风险 noul），返回有序排名表与推荐项。Jev 只打分不解释——得分是多方案岔路口的快速校准参考，最终判断仍由你（代理）综合做出。 |
-| `jev_verify` | 对**线上真实 API** 运行内置带标签基准（27 个带标签问题，含护栏判定），返回实测准确率、中位/p95 延迟、置信校准与成本——这是防欺骗的自我验证。 |
-| `jev_guard_status` | 审计自动护栏：计数、受保护工具、阈值、预算——护栏行为始终透明可见。 |
+| 工具 | 作用 | 该在什么时候调用 |
+| --- | --- | --- |
+| `jev_decision` | 对 `state` **一次调用并行**提出最多 25 个类型化问题（`choice` / `score` / `noul`），实测约 70–500 ms（中位约 300 ms）。每个答案都带校准置信度与概率分布；结果同时报告模型、延迟、token 用量与估算成本。 | 你需要快速、可复现的**判定**而非文本：分类/打标、路由或分诊、优先级/严重度/满意度评分、垃圾/毒性/隐私数据检查、意图或真伪判断、从自由文本抽取结构化标签。相关问题务必合并到一次调用——并行执行不额外增加延迟。 |
+| `jev_choose` | 对 2–10 个候选方案/路线排名：每方案给契合度 score 0–3 与风险 noul，合成 `fit/3 × (1−risk)`；返回有序排名表、推荐项与每方案延迟/成本。 | 岔路口上有多条**彼此独立**的可行路线、需要一份校准过的量化参考再做最终决策时。Jev 只给分、绝不解释——理由由你自己给出。 |
+| `jev_verify` | 对**线上真实 API** 运行冻结的 27 题带标签基准（紧迫度、垃圾、毒性、隐私数据、部门路由、意图、检索类型、优先级、严重度、满意度、护栏判定）：总体准确率与高置信子集准确率、中位/p95/min/max 延迟、置信校准、token、成本与误判清单。 | 确认端点健康、对比模型版本、排查回归——不要例行调用：一轮就是 27 次真实 API 调用（约 8.7K input tokens、≈$0.0004）。 |
+| `jev_guard_status` | 自动护栏只读审计：确定性规则与 Jev 兜底**分别计数**（`checks` / `jevCalls` / `denied` / `deterministicDenied` / `auditCalls`）、受护栏工具名、`denyThreshold`、循环检测计数、本会话剩余预算。 | 确认护栏是否武装、实际触发过几次，或解释某条命令为什么被拦。护栏关闭时会如实说明，而不是报一堆 0。 |
+| `jev_overview` | 本会话 Jev 账本只读快照：最近判定与择案（含置信度）、延迟中位与 p95、问题类型分布、护栏事件、累计 tokens 与成本，以及 Key/护栏/阈值状态。 | 用户问「Jev 做了什么 / 拦了什么 / 花了多少」，或需要不重启会话就核对端点与预算状态时。账本以插件实例生命周期为起点；护栏计数在 `jev_guard_status`。 |
 
 **自动护栏模式**（可选开启 `autoGuard.enabled`）：在 shell 类工具（bash/pwsh/run_code 等）执行前，先用零成本的确定性黑名单拦下硬性破坏命令（rm -rf /、格式化磁盘、删库、凭据外泄等）；其余可疑命令由 **Jev 真实判定**风险（noul 超阈值即拒绝；API 故障时 fail-open 放行并告警，绝不假装检查过）。循环守卫对连续相同工具的调用做语义停滞判定，只注入纠偏建议、不阻断。所有判定可通过 `jev_guard_status` 审计。
 
@@ -20,9 +21,16 @@ Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 A
 - `jev_verify` 拒绝报告任何未经实测的数字；
 - 独立的基准 CLI（`bench/bench.mjs`）零依赖，任何人可用任意 Key 复现发布的数据。
 
+## 0.7.4 更新
+
+- **`jev_choose` 这次才真的注册成功——0.7.3 里这个工具在任何宿主中都不存在。** 它的 `options` 参数声明了 `minItems`/`maxItems`，而宿主的值模式 DSL 不支持这两个关键字（`JsonSchemaError: unsupported JSON schema: parameters.options.minItems is not supported by the value schema DSL`）；`defineTool` 抛错，被「单工具隔离」吞掉，于是 0.7.3 发布了一个任何宿主都调不到的主打功能——而当时的启动测试只断言 4 个工具，所以没有任何告警。0.7.4 删掉这两个关键字（2–10 个候选、每个 ≤800 字符、context ≤2000 字符这些约束改由 `lib/counsel.js` 的 `validateOptions` 在运行时保证），并让 `test/boot.test.mjs` 走真实 `defineTool` 模式编译器断言五个工具全部注册。
+- **引导段这次真的注册进去了——这才让 harness 自己主动调用 Jev。** 0.7.3 及以前，插件用 `getSectionOrder("TOOL_JEV")` 取排序位，而当前这一代 DSH 的槽位表里根本没有 `TOOL_JEV`，取回 `undefined`；宿主的 `systemPrompt.section()` 拒绝非有限数，直接抛 `TypeError: prompt section "<name>" order must be a finite number`，而这个异常又被保护 profile 的同一套隔离吞掉——于是**引导段从未存在过**，模型只看得到工具描述，自然不会主动调用。0.7.4 的 order 解析链为 `getSectionOrder("TOOL_JEV")` → `guidance.order` → `3000`，并把结果写进宿主日志（`system prompt: guidance registered | section tool:jev | order N | chars M`）；`test/boot.test.mjs` 现在会在注册段 order 不是有限数时直接失败。**更正**：0.7.3 更新说明里「使用指引已注入代理 system prompt」在当时并未生效，本版本才真正生效。
+- **功能描述更精确（是什么 / 何时用 / 何时不用）**：五个工具描述现在都写明实测延迟、问题类型规则、「相关问题合并成一次调用」的建议、`jev_verify` 的真实成本，以及明确的禁用边界（`jev_decision` 只出判定不写文本；`jev_choose` 只打分不解释）。系统提示里的引导段由同一套措辞生成，提示词与工具列表不会再各说各话。
+- **新增 `guidance` 配置组**：`guidance.enabled`（默认 true）、`guidance.order`（默认 3000）、`guidance.extra`（按原样追加的部署自定义规则），均可在 GUI 设置卡中编辑。
+
 ## 0.7.3 更新
 
-- **`jev_choose`——多方案择优工具**：一次调用对 2–10 个候选做法逐方案打分（契合度 score 0–3，带校准置信度；风险 noul），合成综合分（`fit/3 × (1−risk)`），返回排名表、推荐项与每方案延迟/成本。使用指引已注入代理 system prompt（「多方案叉路 → 先调 `jev_choose`」），对话内渲染为排名表格（ChooseBody），并计入看板决策统计（`kind: choose` 并入 decisions）。
+- **`jev_choose`——多方案择优工具**：一次调用对 2–10 个候选做法逐方案打分（契合度 score 0–3，带校准置信度；风险 noul），合成综合分（`fit/3 × (1−risk)`），返回排名表、推荐项与每方案延迟/成本。对话内渲染为排名表格（ChooseBody），并计入看板决策统计（`kind: choose` 并入 decisions）。**注意：0.7.3 发布的这个工具是坏的（参数模式被宿主拒绝、注册未成功），修复见下面的 0.7.4。**
 - **0.7.3 已部署**：`D:\lab\jev`（vendor）与 web profile pnpm store 三处字节一致（MD5 全等）；`node --check` 全绿；`rankOptions` 以 mock 传输层完成单元验证。
 
 ## 0.7.2 更新
@@ -102,6 +110,16 @@ dsh plugin --profile web add dsh-jev-verify
 
 返回每个问题的 `answers`（choice/score/noul + confidence + probabilities）、`usage`、`latencyMs` 与 `estimatedCostUs`。
 
+## harness 何时会主动调用 Jev
+
+调用分三条路径，0.7.4 修好的正是第一条：
+
+1. **系统提示引导（主动）**：插件注册名为 `tool:jev` 的提示段（order 默认 `3000`，可用 `guidance.order` 改、`guidance.enabled: false` 关、`guidance.extra` 追加）。它按优先级列出每个工具的触发规则——**判定落进这些类别就立刻调用该工具**——并且只在 `jev_decision` 确实存在时才注册，绝不宣传没加载的工具。这就是让 agent **自己想起来用 Jev** 的机制；没有它，模型只看得到工具清单，很少愿意花一次调用。
+2. **工具描述（发现）**：每个工具描述都写着同样的信息：实测延迟与成本、问题类型规则、「相关问题合并成一次调用」，以及明确边界——`jev_decision` 只出判定不写文本，`jev_choose` 只打分不解释。
+3. **钩子与用户指令**：`autoGuard.enabled` 时，每个受护栏的 shell 类调用在**执行前**被审计（先确定性黑名单、再 Jev），完全不经过模型决策；用户也可以直接说「用 `jev_decision` 判定这条工单」「用 `jev_choose` 给这三个方案排序」「run `jev_verify`」。
+
+如果 agent 还是不理会 Jev，按顺序检查：`guidance.enabled` 没被设为 false；宿主输出里出现过 `guidance registered`；`jev_decision` 在工具清单里；以及这个任务本身确实是判定类任务，而不是写作/推理类任务。
+
 ## 自动护栏
 
 `autoGuard.enabled: true` 时，两个钩子守护受保护的每个工具调用：
@@ -139,6 +157,8 @@ TYPESAFE_API_KEY=... node bench/bench.mjs --repeat 3 # 延迟稳定性
 
 或直接让 Agent 执行「run jev_verify」。
 
+**0.7.4**：引导段现在真实注册（根因：不存在的 `TOOL_JEV` 排序槽位让 `systemPrompt.section()` 抛错，而异常被隔离吞掉）——详见 `docs/verification.md`；`npm test` 覆盖该注册路径。
+
 **回归验证（2026-09-28，v0.7.0）**：在 headless profile（`autoGuard.enabled: true`）中，`jev_guard_status` 正确报告已武装的护栏（工具清单、`deny threshold 0.8`、预算），`jev_overview` 正常返回看板，不再出现此前的 `credentialRef` 崩溃——即 volatile 配置解包修复；`npm test` 19/19 通过。
 
 ## 配置项
@@ -152,6 +172,9 @@ TYPESAFE_API_KEY=... node bench/bench.mjs --repeat 3 # 延迟稳定性
 | `timeoutMs` | 15000 | 单次调用超时 |
 | `maxQuestionsPerCall` | 25 | 单次调用问题数上限 |
 | `verifyEnabled` | true | 是否注册 `jev_verify` |
+| `guidance.enabled` | true | 是否向系统提示注入「何时调用 Jev」引导段 |
+| `guidance.order` | 3000 | 该提示段的排序位（必须能解析为有限数） |
+| `guidance.extra` | `""` | 按原样追加到引导段末尾的部署自定义规则 |
 | `autoGuard.enabled` | false | 自动护栏总开关 |
 | `autoGuard.safetyCheck` | true | 高危命令执行前检查 |
 | `autoGuard.loopCheck` | true | 语义循环检测 |
