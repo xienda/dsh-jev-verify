@@ -2,17 +2,17 @@
 
 把 TypeSafe AI 的 **Jev（System One 决策模型）**接入 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）的一等公民插件。
 
-Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 API 调用**返回**带校准概率的类型化判定**（官方宣称 ~70–500ms）。本插件把它封装成 Agent 工具，附加可选的**自动护栏**（风险/循环检测），并且坚持「验证过的才叫有效」：
+Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 API 调用**返回**带校准概率的类型化判定**（官方宣称 ~70–500ms；我们实测中位 266–484 ms、p95 825–1468 ms（单轮峰值约 1.5 s，网络拥堵时可达约 5 s））。本插件把它封装成 Agent 工具，附加可选的**自动护栏**（风险/循环检测），并且坚持「验证过的才叫有效」：
 
 | 工具 | 作用 | 该在什么时候调用 |
 | --- | --- | --- |
-| `jev_decision` | 对 `state` **一次调用并行**提出最多 25 个类型化问题（`choice` / `score` / `noul`），实测约 70–500 ms（中位约 300 ms）。每个答案都带校准置信度与概率分布；结果同时报告模型、延迟、token 用量与估算成本。 | 你需要快速、可复现的**判定**而非文本：分类/打标、路由或分诊、优先级/严重度/满意度评分、垃圾/毒性/隐私数据检查、意图或真伪判断、从自由文本抽取结构化标签。相关问题务必合并到一次调用——并行执行不额外增加延迟。 |
+| `jev_decision` | 对 `state` **一次调用并行**提出最多 25 个类型化问题（`choice` / `score` / `noul`），官方宣称 ~70–500 ms，我们实测中位 266–484 ms、p95 825–1468 ms。每个答案都带校准置信度与概率分布；结果同时报告模型、延迟、token 用量与估算成本。 | 你需要快速、可复现的**判定**而非文本：分类/打标、路由或分诊、优先级/严重度/满意度评分、垃圾/毒性/隐私数据检查、意图或真伪判断、从自由文本抽取结构化标签。相关问题务必合并到一次调用——并行执行不额外增加延迟。 |
 | `jev_choose` | 对 2–10 个候选方案/路线排名：每方案给契合度 score 0–3 与风险 noul，合成 `fit/3 × (1−risk)`；返回有序排名表、推荐项与每方案延迟/成本。 | 岔路口上有多条**彼此独立**的可行路线、需要一份校准过的量化参考再做最终决策时。Jev 只给分、绝不解释——理由由你自己给出。 |
-| `jev_verify` | 对**线上真实 API** 运行冻结的 27 题带标签基准（紧迫度、垃圾、毒性、隐私数据、部门路由、意图、检索类型、优先级、严重度、满意度、护栏判定）：总体准确率与高置信子集准确率、中位/p95/min/max 延迟、置信校准、token、成本与误判清单。 | 确认端点健康、对比模型版本、排查回归——不要例行调用：一轮就是 27 次真实 API 调用（约 8.7K input tokens、≈$0.0004）。 |
+| `jev_verify` | 对**线上真实 API** 以 6 路并发运行冻结的 27 题带标签基准（紧迫度、垃圾、毒性、隐私数据、部门路由、意图、检索类型、优先级、严重度、满意度、护栏判定；0.7.5 实测 27 次调用墙钟 4.96 s（复测 3.999 s），串行需 10.1 s）：总体准确率与高置信子集准确率、中位/p95/min/max 延迟、置信校准、token、成本，以及**全部**误判清单（并单列其中属于高置信误判的）。 | 确认端点健康、对比模型版本、排查回归——不要例行调用：一轮就是 27 次真实 API 调用（约 8.7K input tokens、≈$0.0004）。 |
 | `jev_guard_status` | 自动护栏只读审计：确定性规则与 Jev 兜底**分别计数**（`checks` / `jevCalls` / `denied` / `deterministicDenied` / `auditCalls`）、受护栏工具名、`denyThreshold`、循环检测计数、本会话剩余预算。 | 确认护栏是否武装、实际触发过几次，或解释某条命令为什么被拦。护栏关闭时会如实说明，而不是报一堆 0。 |
 | `jev_overview` | 本会话 Jev 账本只读快照：最近判定与择案（含置信度）、延迟中位与 p95、问题类型分布、护栏事件、累计 tokens 与成本，以及 Key/护栏/阈值状态。 | 用户问「Jev 做了什么 / 拦了什么 / 花了多少」，或需要不重启会话就核对端点与预算状态时。账本以插件实例生命周期为起点；护栏计数在 `jev_guard_status`。 |
 
-**自动护栏模式**（可选开启 `autoGuard.enabled`）：在 shell 类工具（bash/pwsh/run_code 等）执行前，先用零成本的确定性黑名单拦下硬性破坏命令（rm -rf /、格式化磁盘、删库、凭据外泄等）；其余可疑命令由 **Jev 真实判定**风险（noul 超阈值即拒绝；API 故障时 fail-open 放行并告警，绝不假装检查过）。循环守卫对连续相同工具的调用做语义停滞判定，只注入纠偏建议、不阻断。所有判定可通过 `jev_guard_status` 审计。
+**自动护栏模式**（可选开启 `autoGuard.enabled`）：在 shell 类工具（bash/pwsh/run_code/terminal）执行前，先跑零成本的确定性层。7 条**硬规则**直接拦下灾难性、不可逆的操作：文件系统、盘根或目录树的递归删除、磁盘格式化、数据库破坏语句、凭据外泄、被强制推送的 git 历史；3 条**软规则**（主机重启或关机、未强推的 git 历史重写、恒真条件的 DELETE/UPDATE）交给 **Jev** 判定（noul 超阈值即拒绝）。硬规则只在**可执行位置**触发，所以你只是引用或描述一条危险命令时绝不会被硬拦；落在别处的硬模式会降级为交给 Jev 的提示。Jev 不可用时 fail-open 放行并告警，绝不假装检查过。循环守卫对连续相同工具的调用做语义停滞判定，只注入纠偏建议、不阻断。所有判定（确定性与 Jev）都会写进会话账本，可通过 `jev_guard_status` 审计。
 
 **诚实设计，绝不造假**：
 
@@ -20,6 +20,40 @@ Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 A
 - 每次 `jev_decision` 结果都带回 model、延迟与 token 用量，可审计；
 - `jev_verify` 拒绝报告任何未经实测的数字；
 - 独立的基准 CLI（`bench/bench.mjs`）零依赖，任何人可用任意 Key 复现发布的数据。
+
+## 0.7.5 更新
+
+这是一次「审计版」发布：三路审查（服务端 / 客户端 / 打包）找出的正确性与诚实性问题全部修掉并用测试钉住；`jev_verify` 的 27 题也改为并发执行。
+
+**服务端**
+
+- **看板关闭时账本也照记**：`record()` 原本在独立页面未挂载时直接返回，于是 `jev_overview` 永远报 0 次调用 / 0 token / $0，而 `jev_guard_status` 却在计同样的事件。现在内存 ring 永远记录，只有 HTTP 页面与 `$DSH_HOME/jev-roll.jsonl` 追加仍受 `dashboard.enabled` 控制（README 与设置卡文案已如实改写）。
+- **护栏补上报它本来就知道的事件**：Jev 拦截路径现在会发 `onSafetyDeny`（带 `confidence` 与工具名），循环路径会发 `onLoopAdvisory`，看板的「建议数」与账本里的 Jev 判定分支不再是死代码。
+- **自动护栏重做为「硬 / 软」两层 + 位置感知**（见下方「自动护栏」）：不再对整段参数做正则；根目录删除识别改为逐 token 走 flag，额外 flag、`--flag=value` 写法与反序 flag 都无法再混过去；对普通相对目录（例如构建产物目录）的递归删除降为交给 Jev 的软提示，只出现在引号或描述里的硬模式同样降级，而不是直接拦截。
+- **`TYPESAFE_BASE_URL` / `TYPESAFE_MODEL` 覆盖真正生效**：此前读到的其实是 schema 默认值，环境变量永远不生效，自建端点的用户被静默打到官方地址。
+- **`jev_verify` 分 6 路并发**（`VERIFY_CONCURRENCY`）：实测 4.96 s 墙钟（复测 3.999 s），串行需 10.1 s，也不再逼近工具自身的超时。
+- **`mislabeled` 恢复全量**，并新增 `mislabeledHighConfidence` 单列高置信误判（此前只要有一个高置信误判，低置信误判就全部消失）。
+- **报错会指明具体工具**：`missingKeyError()` 与 abort/timeout/HTTP 文案此前硬编码 `jev_decision`，即使出错的是 `jev_choose` 或 playground。
+- **注册失败不再被冲掉**：`safe()` 现在累积 `regFailures`，`jev_guard_status` 以 `registrations.failures` / `failureCount` 返回——正是这类失败让前面两次发布带着坏功能出门。
+- **成本改为注入常量**（`inputPriceUsdPerMTok`），Jev 判定缓存上限 200 条。
+
+**客户端（对话内视图与设置卡）**
+
+- **`noul` 置信度不再反着显示**：`noul: 0.02` 的「否」此前显示成「否 · 置信度 2%」并配告警色，现在显示判定侧置信度（98%），与概览看板一致。
+- **概览卡补上平均延迟与问题类型分布**（投影其实一直在传）。
+- **`jev_choose` 可审计**：工具视图保留排名结果**以及**提交的候选原文与选型背景，不再只留一个数量。
+- **运行中的标签更诚实**：只有 `jev_decision`/`jev_choose` 在调用途中显示「0 个问题 / 0 个候选」，其它工具不显示。
+- **修掉失效的 CSS 变量**（`--dsw-alias-bg-l2` → `--dsw-alias-bg-layer-2`）——深色主题下推荐行与 chip 此前没有填充。
+- **看板页面会报自己的错**，不再把异常吞成永久「加载中…」，并兼容没有时间戳的事件。
+- **凭据徽章三态**：字面 Key 显示「已配置」，环境变量引用显示「环境变量（未校验）」，都没有则显示「未配置」——环境变量名不再被当成可用凭据。
+
+**打包与文档**
+
+- `test/functional.mjs` → `test/functional.test.mjs`：真实 HTTP 契约与评分测试此前从未在 `npm test` 里跑过（glob 只匹配 `*.test.mjs`）。
+- `bench/choose-e2e.mjs` 不再硬编码开发者主目录，改从 `TYPESAFE_API_KEY` 或 DSH env 文件读 Key。
+- `bench/bench.mjs` 新增 `--concurrency`（默认 6）并报告墙钟；user-agent 带版本号。
+- README 把延迟尾部分位、测试计数写成实测值，`engines.dsh` 标注为「建议性」，不再宣称一条会扫描它根本没检查过的文本的黑名单。
+- 声明可选 peer 依赖（`dsh-credentials`、`dsh-client-locale`、`dsh-client-ui-settings`、`dsh-api-remotes`）。
 
 ## 0.7.4 更新
 
@@ -44,7 +78,7 @@ Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 A
 - **每个工具都有结构化对话内视图**：工具结果新增 `presentationMeta` 投影（`kind: decision | overview | guard | verify`），对话里直接渲染判定卡、护栏看板与实测报告——答案、置信度条、状态标签与统计格，而不再是原始文本；缺少 `meta` 时自动回退解析工具文本。
 - **完整插件设置卡**：「设置 → 插件 → 插件配置 → Jev」现在覆盖全部选项：凭据（Key、凭据引用、API 地址、模型、超时、问题数上限）、工具开关、整组自动护栏（安全/循环开关、受护栏工具清单、拦截阈值、Jev 预算、循环参数）与看板（开关 + 路径），带数值校验与未保存状态处理。
 - **配置处理加固**：使用前会解包 schemastery 的 volatile 字段（`.volatile()`），因此对象形态的 `apiKeyEnv` 不再让 `credentialRef(...)` 崩溃，`autoGuard.enabled` / `dashboard.enabled` 真正生效，数值型选项也按数字读取。
-- **测试 19 项全绿**（`npm test`）：覆盖启动、客户端渲染、工具视图、设置卡、看板、护栏与展示投影。
+- **测试 27 项全绿**（`npm test`）：覆盖启动、客户端渲染、工具视图、设置卡、看板、护栏与展示投影。
 
 ## 为什么是 Jev
 
@@ -52,7 +86,7 @@ TypeSafe AI（创始人 Diogo Almeida，前 OpenAI、ChatGPT 研究方向）于 
 
 ## 安装
 
-要求 Node >= 20，dsh >= 0.1.5-rc.2。
+要求 Node >= 20，dsh >= 0.1.5-rc.2。`engines.dsh` 是**建议性**的：npm 只强制 `node` 键，真正的门槛是宿主提供 `dsh-tools` 0.1.5-rc.2 与 `settings` 服务——缺哪个就只降级哪个界面（并在 `jev_guard_status` 里报出来）。
 
 ```sh
 dsh plugin --profile web add dsh-jev-verify
@@ -81,7 +115,7 @@ dsh plugin --profile web add dsh-jev-verify
 2. 设置 → 插件 → 插件配置 → Jev（凭据服务）；
 3. 插件配置里写 `apiKey`。
 
-可选环境变量：`TYPESAFE_BASE_URL`（默认 `https://api.typesafe.ai/v1`）、`TYPESAFE_MODEL`（默认 `jev-latest`）。
+可选环境变量，且自 0.7.5 起真正优先于 schema 默认值：`TYPESAFE_BASE_URL`（默认 `https://api.typesafe.ai/v1`）、`TYPESAFE_MODEL`（默认 `jev-latest`）。在此修复之前读到的是 schema 默认值，设置这些环境变量没有任何效果。
 
 ## 使用
 
@@ -124,10 +158,10 @@ dsh plugin --profile web add dsh-jev-verify
 
 `autoGuard.enabled: true` 时，两个钩子守护受保护的每个工具调用：
 
-1. **安全门禁**（`tools/pre-execute`）：先跑确定性黑名单（免费），可疑命令交给 **Jev** 判定风险；超过 `denyThreshold` 即拒绝并给出明确理由；Jev 不可用时 fail-open 放行并告警。
+1. **安全门禁**（`tools/pre-execute`）：先跑免费的确定性层，命中结果分**硬**（直接拒绝）与**软**（交给 Jev）两类。7 条硬规则覆盖灾难性、不可逆操作：文件系统/盘根/目录树递归删除、磁盘格式化、数据库破坏语句、凭据外泄、强制推送的 git 历史。3 条软规则覆盖「有破坏性但常常是合法操作」：主机重启或关机、未强推的 git 历史重写、恒真条件的 DELETE/UPDATE。硬模式只在*可执行位置*（命令行开头，或紧跟 `;`/`|`/`&`/`(`/换行，且前面只有包装器、环境变量赋值与 flag）触发，因此只是引用或描述危险命令绝不会被硬拦；出现在别处的硬命中会降级为交给 Jev 的提示。未被拦下的一律交给 **Jev**（风险 noul ≥ `denyThreshold` ⇒ 拒绝），判定缓存上限 200 条，并按会话限预算；Jev 故障时 fail-open 并告警。
 2. **循环检测**（`tools/post-execute`）：连续同工具、输出较长的调用触发 Jev 停滞判定；判定停滞时向下一个请求注入非阻断式纠偏建议，随后进入冷却。
 
-两者都优雅降级，且全部计数可由 `jev_guard_status` 审计。实测演示（2026-09-21）：`remove-item -Recurse …` 被确定性规则拦截；"permanently wipe all staging data and delete every row from every table" 被 **Jev 以 91% 置信度**（阈值 0.8）在执行前拦截。
+所有判定（确定性或 Jev）都会写入会话账本并由 `jev_guard_status` 计数；任何注册失败也会在那里暴露，而不是被滚屏冲掉。本版本自身审计的经验（2026-10-04）：三份审查负载被 0.7.4 的旧规则拦下——两次确定性、一次 Jev 判定 81–85%（阈值 0.8）——这正是硬规则要改成位置感知的原因；同时 0.7.5 的测试重新确认了 0.7.4 的契约（shell 与 PowerShell 递归删除、强制推送 git 历史、读取凭据文件这四类仍然确定性拦截），27/27 全绿。
 
 ## 运行可视化（不另开页面）
 
@@ -139,14 +173,15 @@ dsh plugin --profile web add dsh-jev-verify
 - `jev_verify` — 线上实测报告：准确率、答对数、高置信准确率、中位与 p95 延迟、token、成本与误判用例。
 - `jev_guard_status` — 护栏卡片：受护栏工具、拦截阈值、本会话预算、安全与循环计数、最近一次受检工具。
 
-需要独立网页版时可选开启：`dashboard.enabled: true` 后访问 http://127.0.0.1:3080/jev。
-所有决策/验证/护栏事件还会追加到 `$DSH_HOME/jev-roll.jsonl` 供外部工具使用。
+`jev_overview` 背后的会话账本**永远记录**（内存 ring，上限 300 条事件）——0.7.5 起不再等独立页面开启。需要独立网页版时仍可开启：`dashboard.enabled: true` 后访问 http://127.0.0.1:3080/jev；只有开启后事件才会同时追加到 `$DSH_HOME/jev-roll.jsonl` 供外部工具使用。
 
 ## 验证（实测、带日期）
 
 方法学与最新实测结果见 [docs/verification.md](docs/verification.md)。
 
 **当前状态**：✅ **已于 2026-09-21 对线上 API 实测**（`jev-latest`）：含护栏用例的 27 题基准准确率 **96.3%**（26/27），中位延迟 **283–308 ms**，27 题全程成本 **≈ $0.0004**。唯一误标为已记录的边界值（severity 得分 0.01 vs 期望 0）。
+
+**最新复测（2026-10-04，0.7.5）**：96.3%（26/27），`jev-latest`（`jev-1.13.0`），中位 **266–440 ms**、p95 **825–1468 ms**、8,696 input tokens ≈ **$0.000365**，27 题 6 路并发墙钟 **4.0–5.0 s**（复测 3.999 s）；唯一误标仍是已记录的边界用例（`severity-low`：0.01 vs 期望 0）。
 
 随时可复现：
 
@@ -159,7 +194,9 @@ TYPESAFE_API_KEY=... node bench/bench.mjs --repeat 3 # 延迟稳定性
 
 **0.7.4**：引导段现在真实注册（根因：不存在的 `TOOL_JEV` 排序槽位让 `systemPrompt.section()` 抛错，而异常被隔离吞掉）——详见 `docs/verification.md`；`npm test` 覆盖该注册路径。
 
-**回归验证（2026-09-28，v0.7.0）**：在 headless profile（`autoGuard.enabled: true`）中，`jev_guard_status` 正确报告已武装的护栏（工具清单、`deny threshold 0.8`、预算），`jev_overview` 正常返回看板，不再出现此前的 `credentialRef` 崩溃——即 volatile 配置解包修复；`npm test` 19/19 通过。
+**0.7.5**：三路审计（服务端 / 客户端 / 打包）修复批次，详见上面的「0.7.5 更新」与 `docs/verification.md`；`npm test` 27/27。
+
+**回归验证（2026-09-28，v0.7.0）**：在 headless profile（`autoGuard.enabled: true`）中，`jev_guard_status` 正确报告已武装的护栏（工具清单、`deny threshold 0.8`、预算），`jev_overview` 正常返回看板，不再出现此前的 `credentialRef` 崩溃——即 volatile 配置解包修复；当时 `npm test` 19/19 通过（今天为 27/27）。
 
 ## 配置项
 

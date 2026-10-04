@@ -14,7 +14,7 @@
  * Hand-written, build-free, defensive: any failure degrades only this card.
  */
 window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
-  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.7.4";
+  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.7.5";
   "use strict";
   var module = { exports: {} };
   var react = require("react");
@@ -100,7 +100,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     ".djev-barWarn{background:var(--dsw-alias-label-warning)}",
     ".djev-ansWhy{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}",
     ".djev-chips{display:flex;gap:6px;flex-wrap:wrap;padding:2px 0 6px}",
-    ".djev-chip{border-radius:10px;padding:1px 8px;font-size:11px;background:var(--dsw-alias-bg-l2,#0000000d);color:var(--dsw-alias-label-secondary)}",
+    ".djev-chip{border-radius:10px;padding:1px 8px;font-size:11px;background:var(--dsw-alias-bg-layer-2,#0000000d);color:var(--dsw-alias-label-secondary)}",
     ".djev-chipOk{color:var(--dsw-alias-label-success,#1a7f37)}",
     ".djev-chipWarn{color:var(--dsw-alias-label-warning,#9a6700)}",
     ".djev-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px;padding:2px 0 8px}",
@@ -116,7 +116,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     ".djev-table th{color:var(--dsw-alias-label-tertiary);font-weight:500;font-size:11px}",
     ".djev-table td.djev-tdIdx{color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,Menlo,monospace}",
     ".djev-table td.djev-tdLabel{max-width:320px;word-break:break-word}",
-    ".djev-rowRec td{background:var(--dsw-alias-bg-l2,#0000000d);font-weight:600}",
+    ".djev-rowRec td{background:var(--dsw-alias-bg-layer-2,#0000000d);font-weight:600}",
     ".djev-noteChoose{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}",
   ].join("");
 
@@ -321,7 +321,10 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       });
     }
 
-    var keyConfigured = !!(value.apiKey || value.apiKeyEnv);
+    // Three states, not two: a bare env-var/credential REFERENCE says where the
+    // key would come from at launch, not that it resolved. Calling that
+    // "configured" would paint a green badge over a key that may not exist.
+    var keyState = value.apiKey ? "literal" : value.apiKeyEnv ? "env" : "none";
     /**
      * Numeric fields hold text while they are being edited, so validity is
      * checked here against the field spec (min/max from the same schema the
@@ -390,9 +393,11 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
             "TypeSafe System One 决策模型：毫秒级类型化判定，用于分流、分级与风险拦截。")),
         dirty ? h("span", { className: "djev-tag" }, "未保存") : null,
         h("span", {
-          className: "djev-tag" + (keyConfigured ? " djev-tagOk" : " djev-tagWarn"),
-          title: keyConfigured ? "已配置凭据" : "尚未配置 Key，工具会明确报错",
-        }, keyConfigured ? "已配置" : "未配置"),
+          className: "djev-tag" + (keyState === "literal" ? " djev-tagOk" : keyState === "env" ? "" : " djev-tagWarn"),
+          title: keyState === "literal" ? "已配置明文 Key"
+            : keyState === "env" ? "按凭据引用/环境变量名读取；启动时是否真的存在未经验证"
+            : "尚未配置 Key，工具会明确报错",
+        }, keyState === "literal" ? "已配置" : keyState === "env" ? "环境变量（未校验）" : "未配置"),
         h(Chevron, { open: open })),
       open ? h("div", { className: "djev-body" },
         !writable ? h("p", { className: "djev-hint", role: "status" }, "当前部署为只读，无法保存。") : null,
@@ -470,8 +475,10 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     if (!a || typeof a !== "object") return { value: "—", confidence: null, legend: null };
 
     if (typeof a.noul === "number") {
-      // Probability of "yes": report the decided side plus how sure we are.
-      return { value: a.noul >= 0.5 ? "yes" : "no", confidence: a.noul, legend: null };
+      // noul carries no `confidence` field: the probability IS the belief, so
+      // the confidence of the DECIDED side is noul for "yes" and 1 - noul for
+      // "no". Reporting raw noul showed a confident "no" (0.02) as "2% sure".
+      return { value: a.noul >= 0.5 ? "yes" : "no", confidence: a.noul >= 0.5 ? a.noul : 1 - a.noul, legend: null };
     }
     if (a.noul === true || a.noul === false) {
       return { value: a.noul ? "yes" : "no", confidence: typeof a.confidence === "number" ? a.confidence : null, legend: null };
@@ -589,9 +596,17 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
         h(Stat, { key: "deny", value: sum.guardDenials, label: "次拦截" }),
         h(Stat, { key: "adv", value: sum.guardAdvisories, label: "次提示" }),
         h(Stat, { key: "med", value: sum.medianLatencyMs == null ? "—" : sum.medianLatencyMs + " ms", label: "中位延迟" }),
+        h(Stat, { key: "avg", value: sum.avgLatencyMs == null ? "—" : sum.avgLatencyMs + " ms", label: "平均延迟" }),
         h(Stat, { key: "conf", value: sum.avgConfidence == null ? "—" : pct(sum.avgConfidence) + "%", label: "平均置信度" }),
         h(Stat, { key: "tok", value: sum.totalInputTokens, label: "input tokens" }),
         h(Stat, { key: "cost", value: "$" + Number(sum.totalCostUs || 0).toFixed(6), label: "累计成本" })),
+      Object.keys(sum.typeCounts || {}).length
+        ? h("div", { className: "djev-chips" },
+            h("span", { className: "djev-chip" }, "问题类型"),
+            Object.keys(sum.typeCounts).map(function (k) {
+              return h("span", { key: "t" + k, className: "djev-chip" }, k + " ×" + sum.typeCounts[k]);
+            }))
+        : null,
       recent.length ? h("p", { className: "djev-ansWhy" }, "最近调用（新→旧）") : null,
       recent.map(function (e, i) {
         return h("div", { key: "r" + i, className: "djev-recent" },
@@ -716,7 +731,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     var isResult = block.kind === "tool-result";
     var running = !isResult;
     var isError = !!(isResult && block.isError);
-    var toolName = props.toolName || (block.call && block.call.toolName) || "";
+    var toolName = props.toolName || (block.call && block.call.toolName) || block.name || "";
 
     // Running calls carry argsRaw on the block itself; settled ones nest it
     // under block.call (backfilled from the in-window tool/call).
@@ -736,7 +751,9 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       });
     }
     var state = typeof args.state === "string" ? args.state : "";
-    var optCount = Array.isArray(args.options) ? args.options.length : 0;
+    var optTexts = Array.isArray(args.options) ? args.options.filter(function (t) { return typeof t === "string"; }) : [];
+    var optCount = optTexts.length;
+    var optContext = typeof args.context === "string" ? args.context : "";
 
     var resultText = isResult ? contentText(block.content) : "";
     // Preferred structured path (see the header comment).
@@ -768,7 +785,12 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
 
     // Header chips: the numbers that matter for this kind of call.
     var chips = [];
-    if (running) chips.push((optCount ? optCount + " 个候选" : questions.length + " 个问题"));
+    if (running) {
+      // Only jev_decision/jev_choose submit work items; showing "0 个问题" for
+      // jev_overview / jev_guard_status / jev_verify was pure noise.
+      if (toolName === "jev_choose") chips.push(optCount ? optCount + " 个候选" : "方案选型中");
+      else if (toolName === "jev_decision") chips.push(questions.length ? questions.length + " 个问题" : "问题提交中");
+    }
     else if (kind === "decision") {
       var ms = view ? view.latencyMs : payload && payload.latencyMs;
       var cost = view ? view.estimatedCostUs : payload && payload.estimatedCostUs;
@@ -816,6 +838,25 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
                     style: { padding: "2px 10px", fontSize: "12px" },
                     onClick: function () { setShowState(!showState); },
                   }, showState ? "收起" : "展开全文")
+                : null)
+          : null,
+
+        // C5: the ranking table only showed 60-char labels, and the context that
+        // produced them was never rendered — a model-facing decision was not
+        // auditable from the UI. Show what was actually submitted.
+        kind === "choose" && (optContext || optTexts.length)
+          ? h("div", null,
+              optContext
+                ? h("div", null,
+                    h("p", { className: "djev-ansWhy" }, "选型背景"),
+                    h("p", { className: "djev-tvState" }, optContext))
+                : null,
+              optTexts.length
+                ? h("div", null,
+                    h("p", { className: "djev-ansWhy" }, "候选方案（提交原文）"),
+                    optTexts.map(function (t, i) {
+                      return h("p", { key: "o" + i, className: "djev-tvState" }, "#" + (i + 1) + " " + t);
+                    }))
                 : null)
           : null,
 

@@ -231,6 +231,47 @@
 - 真实 API E2E（`bench/choose-e2e.mjs`，key 取自 `~/.dsh/.env`，从未打印）：三候选真实打分 → 推荐 #1「先验证后发布」契合 1.93/3、风险 23%、综合 50%、置信 41%；陷阱项「直接发布」契合 0.11/3、风险 90%、综合 0.4%（被正确打压）；「只发 npm」契合 1.03/3、风险 56%、综合 15%。总 895 ms，成本 $0.0000674（1605 in + 99 out），模型 jev-1.13.0。**这正是 0.7.3 从未被真实跑通过的那条代码路径。**
 - 备注：宿主进程重启前工具面仍是旧快照（重启前的会话里 `jev_choose` 不可调用），重启后五个工具 + 引导段才生效。
 
+### 2026-10-04（v0.7.5：三路审计修复批次 + `jev_verify` 并发化）
+
+- 需求来源：用户要求「检查/优化插件、提出改进并测试、成功后发布」。做法：三路独立审计（服务端 / 客户端 / 打包与文档，各自 8 条、均带文件:行号与后果），再按「正确性 + 诚实性」取并集定出 10 条服务端、7 条客户端、5 条打包修复（清单见 README「What’s new in 0.7.5」）。
+
+服务端（`lib/index.js`、`lib/guard.js`、`lib/dashboard.js`）：
+
+- **看板账本假零**（最严重的诚实性缺陷）：`lib/dashboard.js:22` 的 `record()` 在独立页面未挂载时 `if (!active) return;`，而 `active` 只在 `registerRoutes`（`:89`）置位、路由又只在 `dashboard.enabled === true` 时挂载（默认 false）→ `jev_overview` 恒报 0 调用 / 0 token / $0，`$DSH_HOME/jev-roll.jsonl` 永不落盘，与 README 承诺矛盾。修复：内存 ring（`MAX_ROLL=300`）**永远记录**，新增 `ledgerOn` 只在页面挂载时置位、只控制 HTTP 页面与 JSONL 追加；README 与设置文案改为如实描述。
+- **护栏漏报自己做过的事**：0.7.4 里 `events.onSafetyDeny` 只在确定性分支上报，Jev 拦截分支（`lib/guard.js:154-162`）静默，导致 `lib/index.js:910` 的「Jev 判定 / confidence」分支成死代码；循环建议也从未发 `onLoopAdvisory`（看板 `guardAdvisories` 恒 0）。修复：两处都补上报，payload 带 `tool` 与 `confidence`。
+- **护栏重做为硬 / 软两层 + 位置感知**：旧实现 7 条规则对**整段参数**做正则且与 flag 顺序耦合——根目录递归删除只要在 flag 之间插一个额外 flag、或把 flag 反序即可绕过（落到通用 risky-verb 的 Jev 分支，Jev 预算耗尽时 fail-open 直接放行）。新实现：`atCommandPosition(text,index)` 判断匹配是否处于可执行位置（文本开头，或紧跟 `;` `|` `&` `(` 换行 / `$(`，且其前 ≤ 4 个词只是 wrapper、环境变量赋值或 flag）；`findRootWipe` / `findDriveRootWipe` 不依赖 flag 顺序；7 条硬规则（文件系统 / 盘根 / 目录树递归删除、磁盘格式化、数据库破坏语句、凭据外泄、强制推送的 git 历史）直接拒绝，3 条软规则（主机重启或关机、未强推的历史重写、恒真条件的 DELETE/UPDATE）交 Jev；硬模式出现在引号或散文中时降级为软提示（标 `(quoted/described)`）——即「引用危险命令」不再被硬拦。`judgeRisky(options, text, toolName)` 现接收工具名，判定缓存上限 200 条。
+- **`TYPESAFE_BASE_URL` / `TYPESAFE_MODEL` 覆盖此前无效**：`resolveOptions` 读到的是 schema 默认值（`cfg.baseURL` 恒有值），env 永远不生效，自建端点用户被静默打到官方地址。修复为 `envGet(ctx,...) ?? cfg... ?? DEFAULT_...` 优先级链。
+- **`jev_verify` 并发**：27 次调用原为严格串行（`for` + `await`），实测墙钟 10.07 s，逼近工具自身的 30 s 上限；改为 `VERIFY_CONCURRENCY = 6` 分批 `Promise.all`（`runCase` 封装单例，结果仍按用例顺序累加），实测 **4.96 s**（2.03×；同日二次复测 **3.999 s**）。
+- **误判清单恢复全量**：`lib/index.js:520/535` 原逻辑「只要存在一个高置信误判就只显示高置信误判」，会掩盖低置信误标。现在 `mislabeled` 全量 + 新增 `mislabeledHighConfidence`。
+- **报错指向具体工具**：`missingKeyError()` 与 abort / timeout / HTTP 文案硬编码 `jev_decision`（`jev_choose`、playground 共用同一抛点会误导用户）。新增 `toolLabel(options)`，`opts(toolName)` 注入标签，文案改为中性并带工具名。
+- **注册失败可审计**：`safe(tag, fn)` 此前只 `logger.warn`（历史上两次因此发布带坏功能的版本）；现在累积 `regFailures`，`jev_guard_status` 新增 `registrations: { failures, failureCount }`，格式化输出给出一行汇总。
+- 记账细节：Jev 返回的 `noul` 无 `confidence` 字段时按 `Math.abs(noul - 0.5) * 2` 折算；看板成本改用注入常量 `inputPriceUsdPerMTok`（删掉硬编码的 0.042）。
+
+客户端（`client/client.js`、`lib/dashboard-page.html`）：
+
+- `noul` 置信度曾把 yes 概率直接当置信度返回（`client/client.js:472-475`）→ `noul: 0.02` 的「否」显示「否 · 置信度 2%」配告警色，与概览看板（同一数据打 0.02 / 2%）自相矛盾；现返回判定侧置信度（`yes ? noul : 1 - noul`），0.02 的「否」显示 98%。
+- `jev_choose` 结果不可审计（只留候选数量）：现在工具视图保留 `options` 原文与 `context` 背景，running 态 chip 改为「N 个候选 / 方案选型中」，且只有 decision / choose 在调用途中显示进度 chip。
+- 概览卡补 `avgLatencyMs` 与 `typeCounts`（服务端投影早已提供，客户端此前丢弃）。
+- 修 CSS 变量笔误（`--dsw-alias-bg-l2` → 真实的 `--dsw-alias-bg-layer-2`），深色主题下推荐行高亮与 chip 恢复填充。
+- 看板页面错误面：空 catch + 裸解引用 `e.ts.slice(11,19)` 会让页面永久停在「加载中…」；现检查 `r.ok`、把 HTTP / 渲染错误写进 `#status`、时间戳做容错。
+- 凭据徽章三态：仅有环境变量名时不再显示「已配置」（`keyConfigured` 曾把 `apiKeyEnv` 当凭据 → 虚绿），改为 literal「已配置」/ env「环境变量（未校验）」/ none「未配置」。
+
+打包与文档：
+
+- `test/functional.mjs` → `test/functional.test.mjs`：npm test 的 glob 只匹配 `*.test.mjs`，真实 HTTP 契约与评分测试**从未在 CI 中运行**过。
+- `bench/choose-e2e.mjs` 硬编码 `C:\Users\孙浩\.dsh\.env`（且随 npm files 一起发布）：改为先读 `TYPESAFE_API_KEY`，再按 `DSH_HOME` / home 下的 env 文件回退，无 key 时明确报 `NO_KEY`。
+- `bench/bench.mjs` 新增 `--concurrency`（默认 6，与工具一致）并报告墙钟与并发度；user-agent 由 `dsh-jev-verify-bench/0.1.0` → `/0.7.5`。
+- README（中英）：延迟尾部分位改写为实测（中位 266–484 ms、p95 825–1468 ms，历史 bench 单轮曾到 p95 5023 / max 9909）；测试计数 19 → 27；`engines.dsh` 标注为建议性（npm 只强制 `node`）；不再宣称一条会扫描它根本没检查过的文本的黑名单。
+- 声明可选 peerDependencies（`dsh-credentials`、`dsh-client-locale`、`dsh-client-ui-settings`、`dsh-api-remotes`，均 optional）。
+
+验证：
+
+- `npm test`：**27/27 全绿**（此前 25/27）。两个失败均定位为契约冲突并已按「测试即契约、不放松安全」处理：PowerShell 递归删除与强制推送的 git 历史按 0.7.4 契约留在硬层（安全回归优先），因此改的是规则表而非测试；`test/toolview.test.mjs:74` 的 running chip 依赖 `toolName`，修 `client/client.js:734` 回退链（`props.toolName` → `block.call.toolName` → `block.name`）后通过。
+- 真实 API 复测（2026-10-04）：**96.3%（26/27）**，模型 `jev-latest`（`jev-1.13.0`），median **440 ms** / p95 **922 ms** / min 248 / max 1519，8,696 input + 822 output tokens ≈ **$0.000365**，**墙钟 4.96 s**（同用例串行实测 10.07 s）；唯一误标是已记录的边界用例 `severity-low`（期望 score 0，返回 0.01，置信度 0.99）。`mislabeled` 全量与 `mislabeledHighConfidence` 字段核对通过。
+- 二次复测（2026-10-04 12:40Z，`bench/bench.mjs --concurrency 6`）：同样 **96.3%（26/27）**，median **282 ms** / p95 **1468 ms** / min 231 / max 1471，8,696 input + 822 output tokens ≈ **$0.000365**，**墙钟 3.999 s**（串行 10.07 s 的 2.52×）；报告 `bench/results/2026-10-04T12-40-07-421Z.json`，唯一误标仍是 `severity-low`。
+- 护栏自证：本轮三路审计的聚合文本在调试期被 0.7.4 旧规则拦下 3 次（2 次确定性、1 次 Jev 判定 81–85%，阈值 0.8）——正是硬规则要改为位置感知的直接证据；0.7.5 起这些描述性文本（引用规则样例词）不再命中硬层。
+- 启动日志：`settings namespace registered: jev-verify | schema: present | scope: object` 与 `system prompt: guidance registered | section tool:jev | order 3000 | chars 838`。
+
 ## 与 dsh-jev/官方博客声明的边界
 
 - 200x 提速、1/400 成本等对比数字依赖具体基线模型与工作负载，本插件不搬运这些相对值，只发布可直接核验的绝对值（延迟、成本、准确率、校准）。

@@ -1,7 +1,7 @@
 {
   "name": "dsh-jev-verify",
-  "version": "0.7.4",
-  "description": "Jev (TypeSafe System One decision model) for DeepSeek Harness — five verdict tools: jev_decision (up to 25 typed questions, one parallel call, ~300 ms), jev_choose (rank 2-10 approaches), jev_overview (session ledger), jev_guard_status (auto-guard audit), jev_verify (frozen 27-question live benchmark, 96.3% measured). Plus an automatic tool-call guard (7 deterministic rules + Jev risk/loop backstop), system-prompt guidance so the agent actually calls it, and a GUI settings card. Honest by design: no API key means an explicit error, never fabricated results; every registration is quarantined so a failure degrades one feature, never the profile.",
+  "version": "0.7.5",
+  "description": "Jev (TypeSafe System One decision model) for DeepSeek Harness — five verdict tools: jev_decision (up to 25 typed questions in one parallel call, measured median 266-484 ms), jev_choose (rank 2-10 approaches), jev_overview (session ledger), jev_guard_status (auto-guard audit), jev_verify (frozen 27-question live benchmark run 6-way parallel, 4.96 s wall, 96.3% measured). Plus an automatic tool-call guard (10 deterministic rules in two tiers - 7 hard-block, 3 Jev-judged - plus a Jev risk/loop backstop), system-prompt guidance so the agent actually calls it, and a GUI settings card. Honest by design: no API key means an explicit error, never fabricated results; every registration is quarantined so a failure degrades one feature, never the profile.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -53,10 +53,26 @@
     "dsh": ">=0.1.5-rc.2"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": ">=4.0.1 <5"
+    "@deepseek-ai/cordis": ">=4.0.1 <5",
+    "@deepseek-ai/dsh-api-remotes": "*",
+    "@deepseek-ai/dsh-client-locale": "*",
+    "@deepseek-ai/dsh-client-ui-settings": "*",
+    "@deepseek-ai/dsh-credentials": "*"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-api-remotes": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-locale": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-settings": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-credentials": {
       "optional": true
     }
   },
@@ -64,7 +80,7 @@
     "bench": "node bench/bench.mjs",
     "check": "node --check lib/index.js && node --check lib/cases.js && node --check bench/bench.mjs && node --check lib/guard.js && node --check lib/dashboard.js && node --check client/client.js",
     "test": "node --test \"test/*.test.mjs\"",
-    "test:functional": "node test/functional.mjs"
+    "test:functional": "node test/functional.test.mjs"
   },
   "publishConfig": {
     "access": "public",

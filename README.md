@@ -5,25 +5,31 @@ Jev — TypeSafe AI's **System One** decision model — as a first-class plugin 
 
 Jev does not generate text. Given a `state` plus typed questions it returns
 **typed answers with calibrated probabilities** in one parallel API call
-(~70–500 ms published). This plugin exposes that as agent tools, adds an
+(~70–500 ms published; in our runs median 266–484 ms and p95 825–1468 ms; single-run maxima reach ~1.5 s and ~5 s under a loaded network). This plugin exposes that as agent tools, adds an
 opt-in **auto-guard** (risk + loop checks), and makes sure the claims are
 *verified, not trusted blindly*:
 
 | Tool | What it does | Call it when |
 | --- | --- | --- |
-| `jev_decision` | Up to 25 typed questions (`choice` / `score` / `noul`) about one `state`, answered **in parallel in one call** (measured ~70–500 ms, median ~300 ms). Every answer carries a calibrated confidence and probabilities; the result also reports model, latency, token usage and estimated cost. | You need fast, repeatable **verdicts** instead of prose: classification/labeling, routing or triage, priority/severity/satisfaction scoring, spam/toxicity/PII checks, intent or truth checks, extracting structured tags. Batch related judgments into one call — parallel, no extra latency. |
+| `jev_decision` | Up to 25 typed questions (`choice` / `score` / `noul`) about one `state`, answered **in parallel in one call** (published ~70–500 ms; measured median 266–484 ms and p95 825–1468 ms across our runs, with single-run maxima of ~1.5–5 s depending on network load). Every answer carries a calibrated confidence and probabilities; the result also reports model, latency, token usage and estimated cost. | You need fast, repeatable **verdicts** instead of prose: classification/labeling, routing or triage, priority/severity/satisfaction scoring, spam/toxicity/PII checks, intent or truth checks, extracting structured tags. Batch related judgments into one call — parallel, no extra latency. |
 | `jev_choose` | Ranks 2–10 candidate options/approaches: each gets a fit score 0–3 and a risk noul, combined into a composite `fit/3 × (1−risk)`; returns an ordered table, a recommended pick, and per-option latency/cost. | Several independent approaches are on the table at a fork and you want a calibrated tiebreaker before deciding. Jev scores, it never explains — the reasoning stays yours. |
-| `jev_verify` | Runs the frozen 27-question labeled benchmark (urgency, spam, toxicity, personal data, routing, intent, search type, priority, severity, satisfaction, guard verdicts) against the **live** API: accuracy overall and on the high-confidence subset, median/p95/min/max latency, calibration, tokens, cost, and the mislabeled cases. | Endpoint health check, model-version comparison, or a regression check — never routinely: one run is 27 real API calls (~8.7K input tokens, ≈$0.0004). |
+| `jev_verify` | Runs the frozen 27-question labeled benchmark (urgency, spam, toxicity, personal data, routing, intent, search type, priority, severity, satisfaction, guard verdicts) against the **live** API at concurrency 6 (measured 4.96 s wall for all 27 calls in 0.7.5 and 3.999 s on a re-run, versus 10.1 s serial): accuracy overall and on the high-confidence subset, median/p95/min/max latency, calibration, tokens, cost, and every mislabeled case (total plus the high-confidence ones). | Endpoint health check, model-version comparison, or a regression check — never routinely: one run is 27 real API calls (~8.7K input tokens, ≈$0.0004). |
 | `jev_guard_status` | Read-only audit of the auto-guard: deterministic rules and the Jev backstop counted separately (`checks` / `jevCalls` / `denied` / `deterministicDenied` / `auditCalls`), guarded tool names, `denyThreshold`, loop-check counts, remaining session budget. | Confirm the guard is armed, see how often it actually fired, or explain why a command was blocked. When the guard is off it says so instead of reporting zeros. |
 | `jev_overview` | Read-only snapshot of this session's Jev ledger: recent decisions and choices with confidence, latency median & p95, question-type mix, guard events, cumulative tokens and cost, plus key/guard/threshold status. | The user asks what Jev has done, blocked or spent — or you need endpoint and budget state without restarting the session. The ledger starts at plugin-instance lifetime; guard counts live in `jev_guard_status`. |
 
 **Auto-guard mode** (opt-in `autoGuard.enabled`): before shell-like tool calls
-(`bash`/`pwsh`/`run_code`/…), a free deterministic blacklist blocks
-hard-destructive commands (rm -rf /, disk format, drop database, credential
-exfiltration, ...); risky-looking commands that pass it are judged by **Jev**
-(risk noul ≥ threshold ⇒ deny; fail-open with a warning on API errors). A loop
-guard evaluates repeated same-tool calls for semantic stalls and injects advice
-instead of blocking. Every verdict is auditable via `jev_guard_status`.
+(`bash`/`pwsh`/`run_code`/`terminal`), a free deterministic layer runs first.
+Seven **hard** rules block catastrophic, irreversible operations — recursive
+deletion of a filesystem, drive or directory tree, disk formatting, database
+destruction, credential exfiltration, force-pushed git history — and three
+**soft** rules (host restart / power-off, git-history rewrites short of a force
+push, always-true DELETE/UPDATE conditions) are handed to **Jev** (risk noul ≥
+threshold ⇒ deny). Hard patterns only fire in *executable position*, so quoting
+or documenting a dangerous command is never blocked, and a hard match found
+elsewhere is downgraded to a Jev-judged hint. Jev failure is fail-open with a
+warning. A loop guard evaluates repeated same-tool calls for semantic stalls and
+injects advice instead of blocking. Every verdict is recorded in the session
+ledger and auditable via `jev_guard_status`.
 
 **Honest by design** — no mock mode, no silent fallback:
 
@@ -31,6 +37,86 @@ instead of blocking. Every verdict is auditable via `jev_guard_status`.
 - every `jev_decision` result includes the model, latency and token usage, so each call is auditable;
 - `jev_verify` refuses to report numbers it did not measure;
 - the benchmark CLI (`bench/bench.mjs`) is dependency-free and reproducible with any key.
+
+## What's new in 0.7.5
+
+The audited release: a three-way review (server, client, packaging) turned up
+a batch of correctness and honesty bugs, all fixed and pinned by tests — and
+`jev_verify` now runs its 27 cases concurrently.
+
+**Server**
+
+- **The session ledger records even when the dashboard is off.** `record()` used
+  to return early unless the standalone page was mounted, so `jev_overview`
+  reported 0 calls / 0 tokens / $0 forever while `jev_guard_status` counted the
+  same events. The in-memory ring now always records; only the HTTP page and the
+  `$DSH_HOME/jev-roll.jsonl` append stay behind `dashboard.enabled` (this README
+  and the setting text now say exactly that).
+- **The guard reports the events it already knew about.** The Jev denial path now
+  emits `onSafetyDeny` (with `confidence` and the tool name) and the loop path
+  emits `onLoopAdvisory`, so the dashboard advisory counter and the Jev-verdict
+  branch of the ledger are no longer dead code.
+- **Auto-guard rebuilt in two deterministic tiers with position awareness** (see
+  *Auto-guard* below): scanning a whole argument list with regular expressions is
+  gone; the root-wipe finder walks flag tokens one by one, so extra flags,
+  `--flag=value` forms and reversed flag order can no longer slip a root wipe
+  past; a recursive delete of an ordinary relative directory (for example a build
+  output folder) is a Jev-judged soft hint instead of a hard block; and a hard
+  pattern that only appears in quoted prose is downgraded the same way.
+- **`TYPESAFE_BASE_URL` / `TYPESAFE_MODEL` overrides work.** The schema defaults
+  were being read as if they were user settings, so the environment variables
+  never won and self-hosted endpoints were silently sent to the official base URL.
+- **`jev_verify` runs in batches of 6** (`VERIFY_CONCURRENCY`): measured 4.96 s (3.999 s on a re-run)
+  wall for the same 27 calls that took 10.1 s serially, and it no longer flirts
+  with the tool own timeout.
+- **`mislabeled` is complete again** and a new `mislabeledHighConfidence` lists
+  which misses were high-confidence (previously one high-confidence miss hid
+  every low-confidence one).
+- **Errors name the tool that failed.** `missingKeyError()` and the abort /
+  timeout / HTTP messages were hardcoded to `jev_decision` even when `jev_choose`
+  or the playground raised them.
+- **Registration failures surface instead of scrolling past.** `safe()` now
+  accumulates `regFailures`, and `jev_guard_status` returns them as
+  `registrations.failures` / `failureCount` — the failure class that shipped
+  two broken releases.
+- **Cost is injected, not hardcoded** (`inputPriceUsdPerMTok`), and the Jev
+  verdict cache is bounded at 200 entries.
+
+**Client (in-chat views and the settings card)**
+
+- **`noul` confidence is no longer inverted.** A "no" verdict with `noul: 0.02`
+  used to display as "no · confidence 2%" in an alarm colour; it now shows the
+  decision-side confidence (98%), matching the overview board.
+- **The overview card shows average latency and the question-type mix** that the
+  presentation projection had been sending all along.
+- **`jev_choose` is auditable**: the tool view keeps the ranked options *and* the
+  submitted candidate text plus the selection context, instead of only a count.
+- **The running chip is honest**: only `jev_decision` / `jev_choose` claim
+  "0 questions" / "0 candidates" while a call is in flight; other tools show none.
+- **Dead CSS variables fixed** (`--dsw-alias-bg-l2` →
+  `--dsw-alias-bg-layer-2`): the recommendation row and chips were invisible in
+  the dark theme.
+- **The dashboard page reports its own failures** instead of swallowing them into
+  a permanent "loading…", and tolerates events without a timestamp.
+- **The credential badge is three-state**: a literal key shows "configured", an
+  environment-variable reference shows "environment variable (not yet verified)",
+  and neither shows "not configured" — an env name is no longer mistaken for a
+  working credential.
+
+**Packaging and docs**
+
+- `test/functional.mjs` → `test/functional.test.mjs`, so the real HTTP-contract
+  and grading tests actually run under `npm test` (they never did: the glob only
+  matched `*.test.mjs`).
+- `bench/choose-e2e.mjs` no longer hardcodes a developer home directory and reads
+  the key from `TYPESAFE_API_KEY` or the DSH env file.
+- `bench/bench.mjs` takes `--concurrency` (default 6) and reports wall time; the
+  user agent is versioned.
+- README: latency tail percentiles and the test count are stated as measured,
+  `engines.dsh` is marked advisory, and the file no longer advertises a blacklist
+  that scanned text it had never inspected.
+- Optional peer dependencies declared (`dsh-credentials`, `dsh-client-locale`,
+  `dsh-client-ui-settings`, `dsh-api-remotes`).
 
 ## What's new in 0.7.4
 
@@ -77,7 +163,7 @@ instead of blocking. Every verdict is auditable via `jev_guard_status`.
   `.volatile()`) are unwrapped before use, so an object-shaped `apiKeyEnv` no
   longer crashes `credentialRef(...)`, `autoGuard.enabled` / `dashboard.enabled`
   actually take effect, and numeric options are read as numbers.
-- **Tests: 19 passing** (`npm test`) covering boot, client render, tool views,
+- **Tests: 27 passing** (`npm test`) covering boot, client render, tool views,
   settings, dashboard, guard and the presentation projections.
 
 ## Why Jev
@@ -91,7 +177,10 @@ loop: classification, routing, triage, scoring, guardrails, truth checks.
 
 ## Install
 
-Requires Node >= 20 and dsh >= 0.1.5-rc.2.
+Requires Node >= 20 and dsh >= 0.1.5-rc.2. `engines.dsh` is **advisory**: npm
+enforces only the `node` key, so the real requirement is a host that exposes
+`dsh-tools` 0.1.5-rc.2 and a `settings` service — the plugin degrades one
+surface at a time (and reports it in `jev_guard_status`) if one is missing.
 
 ```sh
 dsh plugin --profile web add dsh-jev-verify
@@ -123,8 +212,10 @@ Get a free key at <https://console.typesafe.ai/keys>. Then choose one:
 2. Settings > Plugins > Plugin configuration > Jev (credentials service), or
 3. set `apiKey` in the plugin config.
 
-Optional environment overrides: `TYPESAFE_BASE_URL` (default
-`https://api.typesafe.ai/v1`), `TYPESAFE_MODEL` (default `jev-latest`).
+Optional environment overrides, with real precedence over the schema defaults
+since 0.7.5: `TYPESAFE_BASE_URL` (default `https://api.typesafe.ai/v1`) and
+`TYPESAFE_MODEL` (default `jev-latest`). Before that fix the schema default was
+read as if it were a user value, so setting these changed nothing.
 
 ## Usage
 
@@ -171,18 +262,33 @@ If the agent still ignores Jev, check in this order: `guidance.enabled` is not f
 
 When `autoGuard.enabled: true`, two hooks run next to every guarded tool call:
 
-1. **Safety** (`tools/pre-execute`): deterministic blacklist first (free),
-   Jev risk judgment for suspect commands; deny above `denyThreshold` with an
-   explicit reason, fail-open when Jev is unavailable.
+1. **Safety** (`tools/pre-execute`): a free deterministic layer runs first and
+   splits its matches into **hard** (block outright) and **soft** (ask Jev). The
+   seven hard rules cover catastrophic, irreversible operations: recursive
+   deletion of a filesystem, drive or directory tree, disk formatting, database
+   destruction, credential exfiltration, force-pushed git history. The three soft
+   rules cover operations that are destructive but often legitimate: host restart
+   / power-off, git-history rewrites short of a force push, and always-true
+   DELETE/UPDATE conditions. Hard patterns only fire in *executable position*
+   (start of the command, or right after `;` / `|` / `&` / `(` / newline, with
+   only wrappers, env assignments and flags before them), so a command you merely
+   quote or describe is never hard-blocked; a hard match found anywhere else is
+   downgraded to a Jev-judged hint. Everything not blocked goes to **Jev** (risk
+   noul ≥ `denyThreshold` ⇒ deny) with a bounded verdict cache (200 entries) and
+   a per-session budget; Jev failure is fail-open with a warning.
 2. **Loop** (`tools/post-execute`): consecutive same-tool calls with long
    outputs trigger a Jev stall judgment; on a stalled verdict a non-blocking
    advisory is injected into the next request, then a cooldown applies.
 
-Both degrade gracefully and are fully countable via `jev_guard_status`.
-Measured demo (2026-09-21): `remove-item -Recurse …` was blocked by the
-deterministic rule, while "permanently wipe all staging data and delete every
-row from every table" was intercepted by **Jev at 91% confidence** (threshold
-0.8) before any command ran.
+Every verdict — deterministic or Jev — is recorded in the session ledger and
+counted by `jev_guard_status`, which also surfaces any registration failure
+instead of letting it scroll past.
+Evidence from the 0.7.5 audit itself (2026-10-04): three review payloads were
+denied by the 0.7.4 rules — two by the deterministic layer, one by Jev at 81–85%
+(threshold 0.8) — which is exactly why the hard rules became position-aware.
+The 0.7.5 tests re-verify the 0.7.4 contract: the shell and PowerShell
+recursive-delete cases, the force-push case and the credential-read case still
+block deterministically (27/27 tests green).
 
 ## Watching it work (no extra page)
 
@@ -201,9 +307,10 @@ structured cards rather than raw JSON:
 - `jev_guard_status` — guard cards: guarded tools, deny threshold, session
   budget, safety & loop counters and the last guarded tool.
 
-An optional standalone page (`/jev`) exists for deployments that want it:
-set `dashboard.enabled: true` and open http://127.0.0.1:3080/jev.
-Every decision, verify and guard event is also appended to
+The session ledger behind `jev_overview` always records (in memory, bounded at
+300 events) — since 0.7.5 it no longer waits for the standalone page. That page
+still exists for deployments that want it: set `dashboard.enabled: true` and open
+http://127.0.0.1:3080/jev; only then are events also appended to
 `$DSH_HOME/jev-roll.jsonl` for external tooling.
 
 ## Verification (measured, dated)
@@ -216,6 +323,11 @@ accuracy **96.3%** (26/27) with the guard-inclusive benchmark, median latency
 **283–308 ms** across runs, ≈ $0.0004 per 27-question run. The only mislabel is
 the documented boundary near-miss (severity score 0.01 vs expected 0).
 
+**Latest re-measurement (2026-10-04, 0.7.5)**: 96.3% (26/27) on `jev-latest`
+(`jev-1.13.0`), median **266–440 ms**, p95 **825–1468 ms**, 8,696 input tokens ≈
+**$0.000365**, and **4.0–5.0 s wall** for all 27 calls at concurrency 6 (3.999 s on the 2026-10-04 re-run). The single
+mislabel is the recorded boundary case (`severity-low`: 0.01 vs expected 0).
+
 Reproduce any time:
 
 ```sh
@@ -227,11 +339,15 @@ or ask the agent: *“run jev_verify”*.
 
 **0.7.4**: the guidance section registers for real (root cause: a non-existent `TOOL_JEV` order slot made `systemPrompt.section()` throw, and the throw was swallowed) — see `docs/verification.md`. `npm test` covers the registration path.
 
+**0.7.5**: the audit batch (server, client, packaging) — see the 0.7.5 section above and
+`docs/verification.md`; `npm test` is 27/27.
+
 **Regression (2026-09-28, v0.7.0)**: in a headless profile with
 `autoGuard.enabled: true`, `jev_guard_status` reports the armed guard (tools
 list, `deny threshold 0.8`, budget) and `jev_overview` returns its board without
 the former `credentialRef` crash — the volatile-config unwrapping fix. `npm test`
-passes 19/19.
+the former `credentialRef` crash — the volatile-config unwrapping fix. `npm test`
+passed 19/19 at that time (27/27 today).
 
 ## Configuration
 

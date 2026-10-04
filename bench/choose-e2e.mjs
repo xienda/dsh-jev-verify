@@ -1,16 +1,32 @@
 import { createCounselModule } from "../lib/counsel.js";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-const envFile = String.fromCharCode(46) + "env";
-const envPath = "C:\\Users\\孙浩\\.dsh\\" + envFile;
-let key = null;
-try {
-  const raw = readFileSync(envPath, "utf8");
+/**
+ * Resolve the API key the way the plugin does: environment first, then the
+ * DSH_HOME/dsh env file. The path is derived from the running user instead of
+ * being hardcoded to one machine, so the published script works anywhere.
+ */
+function readKey() {
+  const fromEnv = globalThis.process?.env?.["TYPESAFE" + "_API_KEY"];
+  if (typeof fromEnv === "string" && fromEnv.trim().length > 0) return fromEnv.trim();
+  const dotEnv = String.fromCharCode(46) + "env";
+  const home = globalThis.process?.env?.DSH_HOME;
+  const candidates = [];
+  if (typeof home === "string" && home.length > 0) candidates.push(join(home, dotEnv));
+  candidates.push(join(homedir(), ".dsh", dotEnv));
   const prefix = "TYPESAFE" + "_" + "API" + "_" + "KEY" + "=";
-  const line = raw.split("\n").find((l) => l.startsWith(prefix));
-  key = line ? line.slice(prefix.length).trim() : null;
-} catch {}
-if (!key) { console.log("NO_KEY"); process.exit(2); }
+  for (const file of candidates) {
+    try {
+      const line = readFileSync(file, "utf8").split("\n").find((l) => l.startsWith(prefix));
+      if (line) return line.slice(prefix.length).trim();
+    } catch { /* try the next candidate */ }
+  }
+  return null;
+}
+const key = readKey();
+if (!key) { console.log("NO_KEY (set TYPESAFE_API_KEY, or store it in the DSH_HOME env file)"); process.exit(2); }
 
 async function requestSystemOne(callOptions, body, signal) {
   const started = performance.now();

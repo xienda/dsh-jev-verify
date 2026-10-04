@@ -46,13 +46,13 @@ st.push('model: '+esc(s.model)+' · '+esc(s.endpoint)+(s.keyConfigured?'':' · <
 st.push('护栏: '+(s.guardActive?'<span class="ok">开启</span>':'<span class="dim">关闭</span>')+' · 阈值 '+(s.guardThreshold==null?'-':s.guardThreshold)+' · 预算剩余 '+(s.budgetRemaining==null?'-':s.budgetRemaining));
 st.push('更新于 '+esc(s.updatedAt));
 el('status').innerHTML=st.join(' · ');
-var c=d.summary||{};var cards=[['调用次数',String(c.calls==null?0:c.calls)],['中位延迟',(c.medianLatencyMs==null?'-':c.medianLatencyMs+' ms')],['平均置信度',(c.avgConfidence==null?'-':Math.round(c.avgConfidence*100)+'%')],['累计 tokens',String(c.totalInputTokens==null?0:c.totalInputTokens)],['累计成本',fmtMoney(c.totalCostUs)],['护栏拦截',String(c.guardDenials==null?0:c.guardDenials)],['护栏建议',String(c.guardAdvisories==null?0:c.guardAdvisories)],['verify',String(c.verifies==null?0:c.verifies)]];
+var c=d.summary||{};var cards=[['调用次数',String(c.calls==null?0:c.calls)],['中位延迟',(c.medianLatencyMs==null?'-':c.medianLatencyMs+' ms')],['平均延迟',(c.avgLatencyMs==null?'-':c.avgLatencyMs+' ms')],['平均置信度',(c.avgConfidence==null?'-':Math.round(c.avgConfidence*100)+'%')],['累计 tokens',String(c.totalInputTokens==null?0:c.totalInputTokens)],['累计成本',fmtMoney(c.totalCostUs)],['护栏拦截',String(c.guardDenials==null?0:c.guardDenials)],['护栏建议',String(c.guardAdvisories==null?0:c.guardAdvisories)],['verify',String(c.verifies==null?0:c.verifies)]];
 el('cards').innerHTML=cards.map(function(x){return '<div class="card"><div class="k">'+esc(x[0])+'</div><div class="v">'+x[1]+'</div></div>'}).join('');
 el('roll').innerHTML=(d.roll||[]).map(function(e){
-if(e.kind==='decision'){return '<tr><td class="dim">'+esc(e.ts.slice(11,19))+'</td><td>'+esc((e.stateHead||'').slice(0,60))+'</td><td>'+fmtQ(e.questions)+'</td><td>'+esc(e.latencyMs+' ms')+'</td><td>'+fmtMoney(e.costUs)+'</td></tr>';}
-if(e.kind==='verify'){return '<tr><td class="dim">'+esc(e.ts.slice(11,19))+'</td><td class="ok">'+esc(e.summaryText||'verified')+'</td><td colspan="3"></td></tr>';}
+if(e.kind==='decision'){return '<tr><td class="dim">'+esc(String(e.ts||'').slice(11,19))+'</td><td>'+esc((e.stateHead||'').slice(0,60))+'</td><td>'+fmtQ(e.questions)+'</td><td>'+esc(e.latencyMs+' ms')+'</td><td>'+fmtMoney(e.costUs)+'</td></tr>';}
+if(e.kind==='verify'){return '<tr><td class="dim">'+esc(String(e.ts||'').slice(11,19))+'</td><td class="ok">'+esc(e.summaryText||'verified')+'</td><td colspan="3"></td></tr>';}
 return '';}).join('')||'<tr><td colspan="5" class="dim">尚无记录 — 让 agent 调用 jev_decision，或在下方「快速试一次」</td></tr>';
-el('guards').innerHTML=(d.guards||[]).map(function(g){var cls=g.action==='deny'?'bad':'warn';return '<tr><td class="dim">'+esc(g.ts.slice(11,19))+'</td><td class="'+cls+'">'+esc(g.action)+'</td><td>'+esc(g.detail||'')+'</td></tr>'}).join('')||'<tr><td colspan="3" class="dim">暂无护栏事件</td></tr>';
+el('guards').innerHTML=(d.guards||[]).map(function(g){var cls=g.action==='deny'?'bad':'warn';return '<tr><td class="dim">'+esc(String(g.ts||'').slice(11,19))+'</td><td class="'+cls+'">'+esc(g.action)+'</td><td>'+esc(g.detail||'')+'</td></tr>'}).join('')||'<tr><td colspan="3" class="dim">暂无护栏事件</td></tr>';
 var lats=(d.latencySeries||[]).slice(-60);
 if(lats.length>1){var max=Math.max.apply(null,lats);var min=Math.min.apply(null,lats);var span=(max-min)||1;
 var pts=lats.map(function(v,i){return ((i/(lats.length-1))*598).toFixed(1)+','+(84-((v-min)/span)*80).toFixed(1)}).join(' ');
@@ -60,7 +60,10 @@ el('lat').innerHTML='<polyline points="'+pts+'"></polyline>';}else{el('lat').inn
 el('types').innerHTML=typePills(c.typeCounts);
 el('conf').innerHTML='<span class="dim">'+(c.avgConfidence==null?'暂无':Math.round(c.avgConfidence*100)+'% 平均置信度')+'</span>';
 }
-function refresh(){fetch('./api',{cache:'no-store'}).then(function(r){return r.json()}).then(render).catch(function(){})}
+function refresh(){fetch('./api',{cache:'no-store'}).then(function(r){
+if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(function(d){try{render(d)}catch(err){
+el('status').innerHTML='<span class="bad">渲染失败：'+esc(err&&err.message||err)+'</span>'}}).catch(function(err){
+el('status').innerHTML='<span class="bad">看板接口不可用：'+esc(err&&err.message||err)+'</span>'})}
 function tryOnce(){
 var st=el('state').value;var qq=el('qs').value.trim();var out=el('tryout');
 if(!st||!qq){out.innerHTML='<div class="bad">请填写 state 与 questions</div>';return;}
@@ -71,7 +74,7 @@ fetch('./api/try',{method:'POST',headers:{'Content-Type':'application/json'},bod
 if(d.error){out.innerHTML='<div class="bad">'+esc(d.error)+'</div>';return;}
 var lines=['model '+esc(d.model)+' · '+d.latencyMs+' ms · 约 '+fmtMoney(d.costUs)];
 for(var k in d.answers){if(!d.answers.hasOwnProperty(k))continue;var a=d.answers[k];if(!a)continue;
-var v=a.type==='noul'?(a.noul+' (noul)'):(a.type==='choice'?('choice='+a.choice):('score='+a.score));
+var v=a.type==='noul'?((a.noul>=0.5?'yes':'no')+' (noul '+(typeof a.noul==='number'?Math.round(a.noul*100)+'%':'?')+')'):(a.type==='choice'?('choice='+a.choice):('score='+a.score));
 lines.push(k+': '+v+(a.confidence!=null?'  conf='+Math.round(a.confidence*100)+'%':''));}
 out.innerHTML='<div class="verdict">'+esc(lines.join('\n'))+'</div>';
 refresh();}).catch(function(){out.innerHTML='<div class="bad">请求失败</div>'})

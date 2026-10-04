@@ -8,7 +8,10 @@
  * reproduce the published numbers with any TypeSafe API key.
  *
  * Usage:
- *   TYPESAFE_API_KEY=... node bench/bench.mjs [--model jev-latest] [--base-url https://api.typesafe.ai/v1] [--repeat 1] [--json]
+ *   TYPESAFE_API_KEY=... node bench/bench.mjs [--model jev-latest] [--base-url https://api.typesafe.ai/v1] [--repeat 1] [--concurrency 6] [--json]
+ *
+ * `--concurrency` runs that many cases in parallel (default 6, matching the
+ * jev_verify tool) and the wall time is reported next to it.
  *
  * Output: human table on stdout; full JSON at bench/results/<timestamp>.json
  * (unless --no-save).
@@ -25,13 +28,14 @@ const DEFAULT_BASE_URL = "https://api.typesafe.ai/v1";
 const DEFAULT_MODEL = "jev-latest";
 
 function parseArgs(argv) {
-  const opts = { model: process.env.TYPESAFE_MODEL || DEFAULT_MODEL, baseURL: process.env.TYPESAFE_BASE_URL || DEFAULT_BASE_URL, repeat: 1, save: true };
+  const opts = { model: process.env.TYPESAFE_MODEL || DEFAULT_MODEL, baseURL: process.env.TYPESAFE_BASE_URL || DEFAULT_BASE_URL, repeat: 1, concurrency: Number(process.env.JEV_BENCH_CONCURRENCY || 6), save: true };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--model") opts.model = argv[++i];
     else if (arg === "--base-url") opts.baseURL = argv[++i];
     else if (arg === "--repeat") opts.repeat = Number(argv[++i]);
     else if (arg === "--json") opts.json = true;
+    else if (arg === "--concurrency") opts.concurrency = Number(argv[++i]);
     else if (arg === "--no-save") opts.save = false;
     else if (arg === "--help") { opts.help = true; }
     else { console.error("unknown option:", arg); process.exit(2); }
@@ -41,7 +45,7 @@ function parseArgs(argv) {
 
 const opts = parseArgs(process.argv.slice(2));
 if (opts.help) {
-  console.log("Usage: TYPESAFE_API_KEY=... node bench/bench.mjs [--model jev-latest] [--base-url URL] [--repeat N] [--json] [--no-save]");
+  console.log("Usage: TYPESAFE_API_KEY=... node bench/bench.mjs [--model jev-latest] [--base-url URL] [--repeat N] [--concurrency N] [--json] [--no-save]");
   process.exit(0);
 }
 
@@ -70,7 +74,7 @@ async function callCase(testCase) {
         authorization: `Bearer ${apiKey}`,
         "content-type": "application/json",
         accept: "application/json",
-        "user-agent": "dsh-jev-verify-bench/0.1.0",
+        "user-agent": "dsh-jev-verify-bench/0.7.5",
       },
       body: JSON.stringify({ state: testCase.state, model: opts.model, questions }),
     });
@@ -110,19 +114,27 @@ let inputTokens = 0;
 let outputTokens = 0;
 let failures = 0;
 
+const tasks = [];
 for (let rep = 0; rep < opts.repeat; rep += 1) {
-  for (const testCase of VERIFY_CASES) {
-    const result = await callCase(testCase);
-    if (result.error) {
-      failures += 1;
-      console.error(`case ${testCase.id} FAILED: ${result.error}`);
-      continue;
-    }
-    latencies.push(result.latencyMs);
-    inputTokens += result.body?.usage?.input_tokens ?? 0;
-    outputTokens += result.body?.usage?.output_tokens ?? 0;
-    rows.push(...grade(testCase, result.body));
+  for (const testCase of VERIFY_CASES) tasks.push(testCase);
+}
+const concurrency = Math.max(1, Math.min(32, Number.isFinite(opts.concurrency) && opts.concurrency > 0 ? Math.floor(opts.concurrency) : 6));
+const results = new Array(tasks.length);
+for (let start = 0; start < tasks.length; start += concurrency) {
+  const batch = tasks.slice(start, start + concurrency);
+  const settled = await Promise.all(batch.map((testCase) => callCase(testCase)));
+  for (let i = 0; i < settled.length; i += 1) results[start + i] = { testCase: batch[i], result: settled[i] };
+}
+for (const { testCase, result } of results) {
+  if (result.error) {
+    failures += 1;
+    console.error(`case ${testCase.id} FAILED: ${result.error}`);
+    continue;
   }
+  latencies.push(result.latencyMs);
+  inputTokens += result.body?.usage?.input_tokens ?? 0;
+  outputTokens += result.body?.usage?.output_tokens ?? 0;
+  rows.push(...grade(testCase, result.body));
 }
 
 const total = rows.length;
@@ -145,6 +157,7 @@ const report = {
   model: opts.model,
   endpoint,
   repeat: opts.repeat,
+  concurrency,
   caseCount: VERIFY_CASES.length,
   questionCount: total,
   correct,
@@ -172,7 +185,7 @@ if (opts.json) {
   console.log("-".repeat(100));
   console.log(`accuracy: ${(accuracy * 100).toFixed(1)}% (${correct}/${total})`);
   console.log(`latency: median ${stats.medianMs} ms | p95 ${stats.p95Ms} ms | min ${stats.minMs} ms | max ${stats.maxMs} ms`);
-  console.log(`cost: ${inputTokens} input tokens (~$${estimatedUsd.toFixed(6)}), ${outputTokens} output tokens, wall ${wallMs} ms`);
+  console.log(`cost: ${inputTokens} input tokens (~$${estimatedUsd.toFixed(6)}), ${outputTokens} output tokens, wall ${wallMs} ms at concurrency ${concurrency}`);
 }
 
 if (opts.save) {
