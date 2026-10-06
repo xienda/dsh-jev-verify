@@ -216,4 +216,83 @@ function textOf(node, acc = []) {
 // --- PASS 5: a hostile host must never throw.
 assert.doesNotThrow(() => moduleExports.apply({}), "apply with empty ctx must not throw");
 console.log("PASS 5: apply is defensive on hostile hosts");
+// --- PASS 6 (0.8.2): the composer usage pill shows real numbers and degrades
+// quietly. The route is read-only and same-origin; a missing route, a 401, bad
+// JSON or a host without fetch must never surface as an error in the composer.
+{
+  const { pillFromRaw, pillLabel, pillTone, PillBody, PILL_ROUTES } = moduleExports.__internal;
+  assert.deepEqual(PILL_ROUTES, ["/jev/api/usage", "/jev/api"], "the pill prefers the dedicated route");
+
+  const snapshot = {
+    asOf: "2026-10-06T12:00:00.000Z",
+    windows: {
+      today: {
+        calls: 29, costUs: 0.000534, inputTokens: 8700, outputTokens: 900,
+        medianLatencyMs: 933, p95LatencyMs: 3999,
+        guards: { denied: 2, advised: 1 },
+        byTool: { jev_verify: 27, jev_decision: 1, jev_choose: 1 },
+      },
+      session: { calls: 29, since: "2026-10-06T11:00:00.000Z" },
+    },
+    quota: {
+      enabled: true, enforce: false, warnAtPercent: 80, status: "ok", resetInMs: 3600000,
+      limits: { dailyCalls: 200, dailyCostUsd: 0.5, sessionCalls: null },
+      used: { dailyCalls: 29, dailyCostUsd: 0.000534, sessionCalls: 29 },
+      percent: { dailyCalls: 14.5, dailyCostUsd: 0.11 },
+    },
+    history: [ { day: "2026-10-06", calls: 29 } ],
+  };
+  const pill = pillFromRaw(snapshot);
+  assert.equal(pill.ok, true);
+  assert.equal(pill.today.calls, 29);
+  assert.equal(pill.today.medianLatencyMs, 933);
+  assert.equal(pill.today.guards.denied, 2);
+  assert.equal(pill.used.dailyCalls, 29);
+  assert.equal(pill.limits.dailyCalls, 200);
+  assert.deepEqual(pill.history, [ { day: "2026-10-06", calls: 29 } ]);
+  // The full dashboard API wraps the same snapshot under `usage`.
+  assert.equal(pillFromRaw({ usage: snapshot }).today.calls, 29);
+  // A ready-made projection passes straight through; junk becomes null.
+  assert.equal(pillFromRaw({ kind: "jev-usage-pill", ok: true, today: { calls: 1 } }).today.calls, 1);
+  assert.equal(pillFromRaw({ usage: null }), null);
+  assert.equal(pillFromRaw(null), null);
+  assert.equal(pillFromRaw("nope"), null);
+
+  assert.equal(pillLabel(pill), "Jev · 今日 29 次 · $0.000534");
+  assert.equal(pillLabel(null), "Jev · 额度不可用");
+  assert.equal(pillLabel({ ok: false }), "Jev · 额度不可用");
+  assert.equal(pillLabel({ ok: true, enabled: false }), "Jev · 额度已关闭");
+  assert.equal(pillTone(pill), "");
+  assert.equal(pillTone({ ok: true, enabled: true, percent: { dailyCalls: 85 }, warnAtPercent: 80 }), "Warn");
+  assert.equal(pillTone({ ok: true, enabled: true, status: "warn", percent: {} }), "Warn");
+  assert.equal(pillTone({ ok: true, enabled: true, status: "exceeded", percent: {} }), "Bad");
+  assert.equal(pillTone(null), "Bad");
+
+  const body = render(PillBody({ pill, at: Date.parse("2026-10-06T12:00:00.000Z"), busy: false, onRefresh: () => {} }));
+  const bodyText = textOf(body).join(" | ");
+  assert.match(bodyText, /Jev 本机用量 · 额度正常/);
+  assert.match(bodyText, /今日调用/);
+  assert.match(bodyText, /29 \/ 200 次/);
+  assert.match(bodyText, /\$0\.000534/);
+  assert.match(bodyText, /中位 933 ms/);
+  assert.match(bodyText, /护栏拦截/);
+  assert.match(bodyText, /本机实测，非账户余额/);
+  const broken = render(PillBody({ pill: { ok: false, error: "HTTP 404" } }));
+  assert.match(textOf(broken).join(" | "), /HTTP 404/);
+
+  // The slot contract the renderer sorts on: name + id + order.
+  attrs.clear();
+  const { slotInjects } = runApply(false);
+  const pillSlot = slotInjects.find((s) => s.name === "conversation.input.right");
+  assert.ok(pillSlot, "conversation.input.right injected");
+  const entry = pillSlot.fn().next().value;
+  assert.equal(entry.opts.id, "jev-usage");
+  assert.equal(entry.opts.order, 900);
+  assert.equal(entry.opts.name, "conversation.input.right");
+  assert.match(String(attrs.get("data-dsh-jev-card")), /pill/);
+  let pillTree = null;
+  assert.doesNotThrow(() => { pillTree = render(entry.Comp({})); }, "an unloaded pill must not throw");
+  assert.match(textOf(pillTree).join(" | "), /Jev · 额度不可用/, "without data the pill stays a quiet label");
+  console.log("PASS 6: composer usage pill renders numbers and degrades quietly");
+}
 console.log("ALL CLIENT TESTS PASSED");

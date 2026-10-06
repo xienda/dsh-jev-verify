@@ -40,6 +40,34 @@ ledger and auditable via `jev_guard_status`.
 - `jev_verify` refuses to report numbers it did not measure;
 - the benchmark CLI (`bench/bench.mjs`) is dependency-free and reproducible with any key.
 
+## What's new in 0.8.2
+
+Two things the board got wrong, plus a usage surface that does not need the board at all.
+
+- **`/jev` never 404s again.** `dashboard.basePath` used to be taken verbatim, so a
+  value such as `jev` (no leading slash) registered the literal path `jev`, which no
+  browser request ever matches. Paths are now normalized (leading slash added, trailing
+  slashes trimmed, empty or `/` falls back to `/jev`) and both `/jev` and `/jev/` are
+  registered. With `dashboard.enabled: false` the path still answers with a live status
+  page — today's calls, cost, this instance, today's tokens and latency, quota state —
+  that points at the composer pill and says how to turn the full board on, instead of a
+  bare host 404.
+- **`/jev/api/usage` — a small read-only JSON route** that always mounts (it does not
+  wait for `dashboard.enabled`) and projects the same locally measured snapshot the
+  `jev_usage` tool returns.
+- **A composer usage pill** (`conversation.input.right`, beside the submit button),
+  modeled on `dsh-opencode-go`: `Jev · 今日 29 次 · $0.000534` with a warn/danger tone
+  dot, expanding into a 270 px popover — today's calls and cost against their limits,
+  this instance's calls, today's tokens, median and p95 latency, guard denials, the top
+  three tools, time to reset, last refresh and a manual refresh. It polls every 60 s and
+  on tab focus, falls back to the full board API when the pill route is absent, and
+  degrades to `Jev · 额度不可用` carrying the exact error — it never throws. It reports
+  local measurements only, never a vendor balance; `jev_usage` in the conversation stays
+  the full panel.
+- Regression tests: `test/dashboard.test.mjs` covers the path normalizer, the route table
+  with the board on, off and on a custom `basePath`, the 200 status page and a failing
+  snapshot; `test/client.test.mjs` covers the pill payload's three shapes, the label and
+  tone states, and the rendered popover text. `npm test` is 29/29.
 ## What's new in 0.8.1
 
 Fixes the Settings > Plugins card that showed **未配置 / unconfigured** and blank
@@ -435,6 +463,11 @@ above. `docs/verification.md` records the measured accounting.
 Settings > Plugins card decodes again and never reports a configured key as
 unconfigured; the card also falls back to the raw config layers when a value
 cannot be decoded. `npm test` is 29/29. See the 0.8.1 section above.
+
+**0.8.2**: `/jev` stopped 404ing (normalized `dashboard.basePath`, a status page even
+when the board is off), a read-only `/jev/api/usage` route always mounts, and the
+composer gained a compact `Jev · 今日 N 次 · $…` usage pill with an expanding popover.
+`npm test` is 29/29. See the 0.8.2 section above.
 
 **Regression (2026-09-28, v0.7.0)**: in a headless profile with
 `autoGuard.enabled: true`, `jev_guard_status` reports the armed guard (tools

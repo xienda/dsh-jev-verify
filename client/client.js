@@ -14,7 +14,7 @@
  * Hand-written, build-free, defensive: any failure degrades only this card.
  */
 window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
-  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.8.1";
+  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.8.2";
   "use strict";
   var module = { exports: {} };
   var react = require("react");
@@ -118,6 +118,24 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     ".djev-table td.djev-tdIdx{color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,Menlo,monospace}",
     ".djev-table td.djev-tdLabel{max-width:320px;word-break:break-word}",
     ".djev-rowRec td{background:var(--dsw-alias-bg-layer-2,#0000000d);font-weight:600}",
+    ".djev-pillWrap{position:relative;display:inline-flex}",
+    ".djev-pill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:12px;border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2,#0000000d);color:var(--dsw-alias-label-secondary);font-size:11px;font-variant-numeric:tabular-nums;cursor:pointer}",
+    ".djev-pill:hover{background:var(--dsw-alias-bg-layer-3,#00000014)}",
+    ".djev-pillWarn{color:var(--dsw-alias-label-warning,#9a6700)}",
+    ".djev-pillBad{color:var(--dsw-alias-label-error,#c62828)}",
+    ".djev-pillDot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-success,#1a7f37);flex:none}",
+    ".djev-pillDotWarn{background:var(--dsw-alias-label-warning,#9a6700)}",
+    ".djev-pillDotBad{background:var(--dsw-alias-label-error,#c62828)}",
+    ".djev-pillPop{position:absolute;right:0;bottom:calc(100% + 8px);z-index:40;width:270px;border-radius:10px;border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1,#fff);box-shadow:0 8px 24px rgba(0,0,0,.18);padding:10px 12px;color:var(--dsw-alias-label-primary);text-align:left}",
+    ".djev-pillPopTitle{font-size:12px;font-weight:600;margin-bottom:2px}",
+    ".djev-pillPopSub{font-size:11px;color:var(--dsw-alias-label-tertiary);margin-bottom:8px;line-height:1.5}",
+    ".djev-pillMeter{margin:7px 0}",
+    ".djev-pillMeterHead{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--dsw-alias-label-secondary);margin-bottom:3px}",
+    ".djev-pillRows{margin-top:8px;border-top:.5px solid var(--dsw-alias-border-l2);padding-top:6px;display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--dsw-alias-label-tertiary)}",
+    ".djev-pillRow{display:flex;justify-content:space-between;gap:8px}",
+    ".djev-pillRow b{color:var(--dsw-alias-label-secondary);font-weight:500}",
+    ".djev-pillFoot{margin-top:9px;display:flex;justify-content:space-between;align-items:center;gap:8px;color:var(--dsw-alias-label-tertiary);font-size:10px}",
+    ".djev-pillBtn{border:.5px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-secondary);border-radius:6px;padding:1px 6px;font-size:10px;cursor:pointer}",
     ".djev-noteChoose{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}",
   ].join("");
 
@@ -1097,6 +1115,277 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     });
   }
 
+  /* ------------------------------------------------------------------ *
+   * Composer usage pill (0.8.2).                                        *
+   *                                                                     *
+   * A compact always-on readout next to the send button, modelled on   *
+   * dsh-opencode-go usage pill: it polls one read-only JSON route the   *
+   * server half registers, shows today's calls/cost and the local       *
+   * quota meters, and expands into a small popover. Every failure path  *
+   * (no route, 401, bad JSON, no fetch) degrades to a quiet label.      *
+   * ------------------------------------------------------------------ */
+
+  /** Route candidates, tried in order; the second is the full dashboard API. */
+  var PILL_ROUTES = ["/jev/api/usage", "/jev/api"];
+  var PILL_REFRESH_MS = 60000;
+
+  var EMPTY_PILL_STATE = { pill: null, error: "", at: 0, open: false, busy: false };
+
+  /** Accept either the pill projection or a raw usage snapshot from jev_usage. */
+  function pillFromRaw(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    if (raw.kind === "jev-usage-pill") return raw;
+    var snap = raw.usage && typeof raw.usage === "object" ? raw.usage : raw;
+    if (!snap || typeof snap !== "object" || !snap.quota) return null;
+    var q = snap.quota || {};
+    var win = snap.windows || {};
+    var today = win.today || {};
+    var session = win.session || null;
+    return {
+      kind: "jev-usage-pill",
+      ok: true,
+      asOf: snap.asOf || new Date().toISOString(),
+      status: q.status || "ok",
+      enabled: q.enabled !== false,
+      enforce: q.enforce === true,
+      warnAtPercent: q.warnAtPercent == null ? 80 : q.warnAtPercent,
+      resetInMs: q.resetInMs == null ? null : q.resetInMs,
+      limits: q.limits || {},
+      used: q.used || {},
+      percent: q.percent || {},
+      projection: q.projection || null,
+      today: {
+        calls: today.calls || 0,
+        costUs: today.costUs || 0,
+        inputTokens: today.inputTokens || 0,
+        outputTokens: today.outputTokens || 0,
+        medianLatencyMs: today.medianLatencyMs == null ? null : today.medianLatencyMs,
+        p95LatencyMs: today.p95LatencyMs == null ? null : today.p95LatencyMs,
+        guards: today.guards || { denied: 0, advised: 0 }
+      },
+      byTool: today.byTool || {},
+      session: session ? { calls: session.calls || 0, since: session.since || null } : null,
+      history: (snap.history || []).map(function (row) { return { day: row && row.day, calls: (row && row.calls) || 0 }; })
+    };
+  }
+
+  function pillMoney(usd) {
+    var n = Number(usd) || 0;
+    return n >= 0.01 ? "$" + n.toFixed(4) : "$" + n.toFixed(6);
+  }
+
+  function pillDur(ms) {
+    var n = Number(ms);
+    if (!Number.isFinite(n) || n <= 0) return "-";
+    var mins = Math.round(n / 60000);
+    if (mins < 60) return mins + " 分钟";
+    return Math.floor(mins / 60) + " 小时 " + (mins % 60) + " 分";
+  }
+
+  /** One-line label for the collapsed pill. Never empty, never throws. */
+  function pillLabel(pill) {
+    try {
+      if (!pill || pill.ok === false) return "Jev · 额度不可用";
+      if (pill.enabled === false) return "Jev · 额度已关闭";
+      var today = pill.today || {};
+      var text = "Jev · 今日 " + (Number(today.calls) || 0) + " 次";
+      var cost = Number(today.costUs) || 0;
+      if (cost > 0) text += " · " + pillMoney(cost);
+      return text;
+    } catch (e) {
+      return "Jev · 额度不可用";
+    }
+  }
+
+  function pillTone(pill) {
+    if (!pill || pill.ok === false) return "Bad";
+    if (pill.enabled === false) return "";
+    var pct = pill.percent || {};
+    var worst = Math.max(Number(pct.dailyCalls) || 0, Number(pct.dailyCostUsd) || 0, Number(pct.sessionCalls) || 0);
+    if (pill.status === "exceeded" || worst >= 100) return "Bad";
+    if (pill.status === "warn" || worst >= (Number(pill.warnAtPercent) || 80)) return "Warn";
+    return "";
+  }
+
+  function pillStatusText(pill) {
+    if (pill.status === "exceeded") return "已超额度";
+    if (pill.status === "warn") return "接近额度";
+    return "额度正常";
+  }
+
+  function pillMeter(label, valueText, pct) {
+    var p = Number(pct);
+    var width = Number.isFinite(p) ? Math.max(0, Math.min(100, p)) : 0;
+    var cls = "djev-barFill" + (Number.isFinite(p) && p >= 100 ? " djev-barBad" : Number.isFinite(p) && p >= 80 ? " djev-barWarn" : "");
+    return h("div", { className: "djev-pillMeter", key: label },
+      h("div", { className: "djev-pillMeterHead" },
+        h("span", null, label),
+        h("span", null, valueText),
+      ),
+      h("div", { className: "djev-bar" }, h("div", { className: cls, style: { width: width + "%" } })),
+    );
+  }
+
+  /** Pure popover body: no hooks, so the offline tests can render it directly. */
+  function PillBody(props) {
+    var pill = props && props.pill;
+    var error = props && props.error;
+    if (!pill || pill.ok === false) {
+      return h("div", { className: "djev-pillPop" },
+        h("div", { className: "djev-pillPopTitle" }, "Jev 用量"),
+        h("div", { className: "djev-pillPopSub" }, (error || (pill && pill.error) || "暂时读不到本机用量") + "。这里只显示本机实测数据；对话内可用 jev_usage 查看完整面板。"),
+      );
+    }
+    var today = pill.today || {};
+    var used = pill.used || {};
+    var limits = pill.limits || {};
+    var percent = pill.percent || {};
+    var session = pill.session || null;
+    var guards = today.guards || {};
+    var byTool = pill.byTool || {};
+    var topTools = Object.keys(byTool).map(function (name) { return { name: name, calls: Number(byTool[name]) || 0 }; })
+      .sort(function (a, b) { return b.calls - a.calls; }).slice(0, 3);
+    var rows = [];
+    rows.push(h("div", { className: "djev-pillRow", key: "tok" },
+      h("span", null, "今日 tokens"),
+      h("b", null, (Number(today.inputTokens) || 0) + " 入 / " + (Number(today.outputTokens) || 0) + " 出")));
+    rows.push(h("div", { className: "djev-pillRow", key: "lat" },
+      h("span", null, "今日判定时延"),
+      h("b", null, today.medianLatencyMs == null ? "暂无" : "中位 " + today.medianLatencyMs + " ms")));
+    rows.push(h("div", { className: "djev-pillRow", key: "guard" },
+      h("span", null, "护栏拦截"),
+      h("b", null, (Number(guards.denied) || 0) + " 次")));
+    if (session) {
+      rows.push(h("div", { className: "djev-pillRow", key: "sess" },
+        h("span", null, "本插件实例"),
+        h("b", null, (Number(session.calls) || 0) + " 次")));
+    }
+    if (topTools.length) {
+      rows.push(h("div", { className: "djev-pillRow", key: "tools" },
+        h("span", null, "按工具"),
+        h("b", null, topTools.map(function (t) { return t.name + " " + t.calls; }).join(" · "))));
+    }
+    rows.push(h("div", { className: "djev-pillRow", key: "reset" },
+      h("span", null, "额度重置"),
+      h("b", null, pillDur(pill.resetInMs) + "后")));
+    return h("div", { className: "djev-pillPop" },
+      h("div", { className: "djev-pillPopTitle" }, "Jev 本机用量 · " + pillStatusText(pill)),
+      h("div", { className: "djev-pillPopSub" }, pill.enforce ? "触顶会拦截新的 Jev 调用。" : "触顶只告警，不拦截调用。"),
+      pillMeter("今日调用", (Number(used.dailyCalls) || 0) + (limits.dailyCalls == null ? " 次" : " / " + limits.dailyCalls + " 次"), percent.dailyCalls),
+      pillMeter("今日成本", pillMoney(used.dailyCostUsd) + (limits.dailyCostUsd == null ? "" : " / $" + Number(limits.dailyCostUsd).toFixed(2)), percent.dailyCostUsd),
+      pillMeter("本实例调用", (Number(used.sessionCalls) || 0) + (limits.sessionCalls == null ? " 次" : " / " + limits.sessionCalls + " 次"), percent.sessionCalls),
+      h("div", { className: "djev-pillRows" }, rows),
+      h("div", { className: "djev-pillFoot" },
+        h("span", null, (props.at ? new Date(props.at).toLocaleTimeString() : "尚未刷新") + " · 本机实测，非账户余额"),
+        h("button", { type: "button", className: "djev-pillBtn", onClick: props.onRefresh, disabled: props.busy === true }, props.busy ? "刷新中" : "刷新"),
+      ),
+    );
+  }
+
+  /** Poll the read-only usage route; resolves to a pill object or {ok:false}. */
+  function fetchPill() {
+    if (typeof fetch !== "function") return Promise.resolve({ kind: "jev-usage-pill", ok: false, error: "此环境不支持 fetch" });
+    var index = 0;
+    function attempt() {
+      return fetch(PILL_ROUTES[index], { credentials: "same-origin", headers: { accept: "application/json" } })
+        .then(function (res) {
+          if (!res || !res.ok) throw new Error("HTTP " + (res && res.status ? res.status : "?"));
+          return res.json();
+        })
+        .then(function (body) {
+          var pill = pillFromRaw(body);
+          if (!pill) throw new Error("unexpected payload");
+          return pill;
+        })
+        .catch(function (err) {
+          index += 1;
+          if (index < PILL_ROUTES.length) return attempt();
+          return { kind: "jev-usage-pill", ok: false, error: String((err && err.message) || err) };
+        });
+    }
+    return attempt();
+  }
+
+  /** The collapsed pill plus its popover. Degrades to a quiet label. */
+  function UsagePill() {
+    var pair = useState(EMPTY_PILL_STATE);
+    var st = (pair && pair[0]) || EMPTY_PILL_STATE;
+    var set = pair && typeof pair[1] === "function" ? pair[1] : function () { };
+    function patch(next) {
+      try {
+        set(function (prev) { return Object.assign({}, EMPTY_PILL_STATE, prev || {}, next); });
+      } catch (e) { /* read-only stub */ }
+    }
+    var effect = typeof useEffect === "function" ? useEffect : null;
+    if (effect) {
+      effect(function () {
+        var alive = true;
+        function load(busy) {
+          patch({ busy: busy === true && true });
+          fetchPill().then(function (pill) {
+            if (!alive) return;
+            patch({ pill: pill, error: pill && pill.ok === false ? pill.error : "", at: Date.now(), busy: false });
+          }).catch(function (err) {
+            if (!alive) return;
+            patch({ pill: null, error: String((err && err.message) || err), at: Date.now(), busy: false });
+          });
+        }
+        load(false);
+        var timer = typeof setInterval === "function" ? setInterval(function () { load(true); }, PILL_REFRESH_MS) : null;
+        function onVisible() {
+          try {
+            if (typeof document !== "undefined" && document.visibilityState === "visible") load(true);
+          } catch (e) { /* ignore */ }
+        }
+        if (typeof document !== "undefined" && document.addEventListener) document.addEventListener("visibilitychange", onVisible);
+        return function () {
+          alive = false;
+          if (timer && typeof clearInterval === "function") clearInterval(timer);
+          if (typeof document !== "undefined" && document.removeEventListener) document.removeEventListener("visibilitychange", onVisible);
+        };
+      }, []);
+    }
+    var tone = pillTone(st.pill);
+    return h("div", { className: "djev-pillWrap" },
+      h("button", {
+        type: "button",
+        className: "djev-pill" + (tone ? " djev-pill" + tone : ""),
+        title: st.pill ? pillLabel(st.pill) + " · 点击展开" : "Jev 本机用量（未取到数据）",
+        onClick: function () { patch({ open: !st.open }); },
+      },
+        h("span", { className: "djev-pillDot" + (tone ? " djev-pillDot" + tone : "") }),
+        h("span", null, pillLabel(st.pill)),
+      ),
+      st.open ? h(PillBody, {
+        pill: st.pill,
+        error: st.error,
+        at: st.at,
+        busy: st.busy,
+        onRefresh: function () { patch({ busy: true }); fetchPill().then(function (pill) { patch({ pill: pill, error: pill && pill.ok === false ? pill.error : "", at: Date.now(), busy: false }); }); },
+      }) : null,
+    );
+  }
+
+  /**
+   * Mount the pill in the composer's right-hand slot. The slot is declared by
+   * dsh-client-ui-conversation; when that package is absent the inject never
+   * fires and the rest of the plugin is unaffected.
+   */
+  function registerUsagePill(ctx) {
+    ctx.slots.inject("conversation.input.right", function* () {
+      yield ctx.slots.register(
+        {
+          name: "conversation.input.right",
+          id: "jev-usage",
+          order: 900,
+          inject: function () { return {}; },
+        },
+        UsagePill,
+      );
+    });
+  }
+
+  /**
   /**
    * Own how Jev's calls render inside a turn. The slot is keyed by wire tool
    * name, so registering the names below takes over exactly those calls and
@@ -1136,6 +1425,12 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       // used to abort apply() before this ran, which silently removed the tool
       // view on hosts where the card could not register.
       try { registerToolViews(ctx); registered.push("toolview"); } catch (e) { /* ignore */ }
+      mark();
+
+      // The composer pill lives in the conversation composer slot. It is
+      // registered in its own quarantine so a host without that slot costs
+      // nothing else, and so a pill failure can never remove the tool view.
+      try { registerUsagePill(ctx); registered.push("pill"); } catch (e) { /* pill is optional */ }
       mark();
 
       // The legacy card needs BOTH the slot and the `settingsScope` service.
@@ -1199,7 +1494,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     // Internal, for the offline render tests only: decoding the wire answer
     // shapes is the part of this bundle most worth pinning down, and it needs
     // no DOM. Not part of the plugin's service surface.
-    __internal: { readAnswer: readAnswer, contentText: contentText, parseJSON: parseJSON, keySourceOf: keySourceOf, rawLayersOf: rawLayersOf, layerGet: layerGet },
+    __internal: { readAnswer: readAnswer, contentText: contentText, parseJSON: parseJSON, keySourceOf: keySourceOf, rawLayersOf: rawLayersOf, layerGet: layerGet, pillFromRaw: pillFromRaw, pillLabel: pillLabel, pillTone: pillTone, PillBody: PillBody, UsagePill: UsagePill, PILL_ROUTES: PILL_ROUTES },
   };
   return module.exports;
 }});

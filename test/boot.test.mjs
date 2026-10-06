@@ -138,14 +138,27 @@ console.log("PASS 3: system-prompt guidance registers under the real host contra
 }
 console.log("PASS 4: guidance config (order / extra / enabled) is honoured");
 
-// dashboard enabled: exactly the three page routes registered on webServer
+// dashboard enabled: page (both spellings), full API and the composer-pill route
 {
   const { ctx, tools: registered, routes } = fakeCtx();
   apply(ctx, { dashboard: { enabled: true } });
   const paths = routes.map((r) => r.path).sort();
-  assert.deepEqual(paths, ["/jev", "/jev/api", "/jev/api/try"], "dashboard routes when enabled");
+  assert.deepEqual(paths, ["/jev", "/jev/", "/jev/api", "/jev/api/try", "/jev/api/usage"], "dashboard routes when enabled");
 }
-console.log("PASS 3: dashboard routes only when enabled");
+console.log("PASS 3: dashboard routes when enabled");
+
+// 0.8.2: the pill route is mounted even while the dashboard flag is off — the
+// mount used to be gated on dashboard.enabled, which is why /jev 404ed and the
+// pill had nothing to read.
+{
+  const { ctx, routes } = fakeCtx();
+  apply(ctx, { dashboard: { enabled: false } });
+  const paths = routes.map((r) => r.path).sort();
+  assert.ok(paths.includes("/jev"), "the mount path answers while the dashboard is off");
+  assert.ok(paths.includes("/jev/api/usage"), "the pill route is mounted while the dashboard is off");
+  assert.ok(!paths.includes("/jev/api/try"), "the playground stays behind dashboard.enabled");
+}
+console.log("PASS 3b: pill route mounted without dashboard.enabled");
 
 // enabled:false -> no tools at all
 {

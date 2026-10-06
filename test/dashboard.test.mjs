@@ -1,10 +1,17 @@
 /**
- * Dashboard tests: route registration, HTML page, JSON API, playground POST
- * and ledger recording — all against a fake webServer + mock Jev client.
+ * Dashboard tests: route registration, HTML page, JSON API, playground POST,
+ * ledger recording and the 0.8.2 composer-pill route — all against a fake
+ * webServer + mock Jev client.
+ *
+ * Regression history this file pins down:
+ *   1. `dashboard.basePath: jev` (no leading slash) mounted the literal path
+ *      "jev", so http://127.0.0.1:3080/jev answered with a browser 404.
+ *   2. The web half was mounted only while dashboard.enabled was true, which
+ *      ALSO took the always-on composer pill offline.
  */
 import { EventEmitter } from "node:events";
 import assert from "node:assert/strict";
-import { createDashboardModule } from "../lib/dashboard.js";
+import { createDashboardModule, normalizeBasePath, PILL_ROUTE } from "../lib/dashboard.js";
 
 function fakeReq(method, body) {
   const req = new EventEmitter();
@@ -39,18 +46,49 @@ const mockRso = async (options, body, _signal) => {
   return { body: { model: "jev-mock", answers, usage: { input_tokens: 100, output_tokens: 3 } }, latencyMs: 42 };
 };
 
+function sampleSnapshot() {
+  return {
+    asOf: "2026-10-06T12:00:00.000Z",
+    windows: {
+      today: {
+        calls: 29, costUs: 0.000534, inputTokens: 8700, outputTokens: 900,
+        medianLatencyMs: 933, p95LatencyMs: 3999,
+        guards: { denied: 2, advised: 1 },
+        byTool: { jev_verify: 27, jev_decision: 1, jev_choose: 1 },
+      },
+      session: { calls: 29, since: "2026-10-06T11:00:00.000Z" },
+    },
+    quota: {
+      enabled: true, enforce: false, warnAtPercent: 80, status: "ok", resetInMs: 3600000,
+      limits: { dailyCalls: 200, dailyCostUsd: 0.5, sessionCalls: null },
+      used: { dailyCalls: 29, dailyCostUsd: 0.000534, sessionCalls: 29 },
+      percent: { dailyCalls: 14.5, dailyCostUsd: 0.11 },
+      projection: { calls: 41 },
+    },
+    history: [ { day: "2026-10-05", calls: 8 }, { day: "2026-10-06", calls: 29 } ],
+    provider: "typesafe",
+    priceUsdPerMTok: 0.042,
+    persistence: false,
+  };
+}
+
 const routes = [];
 const fakeHost = { webServer: { register: (r) => routes.push(r) } };
 const mod = createDashboardModule({ requestSystemOne: mockRso });
 mod.registerRoutes(fakeHost, { dashboard: { enabled: true } }, () => ({
   model: "jev-mock", baseURL: "https://api.typesafe.ai/v1", apiKey: "k", resolveApiKey: async () => "k",
-}), () => ({ guardActive: true, denyThreshold: 0.8, budgetRemaining: 9 }));
+}), () => ({ guardActive: true, denyThreshold: 0.8, budgetRemaining: 9, usage: sampleSnapshot() }));
 
-assert.equal(routes.length, 3, "three routes registered");
-const [page, api, tryRoute] = routes;
-assert.equal(page.path, "/jev");
-assert.equal(api.path, "/jev/api");
-assert.equal(tryRoute.path, "/jev/api/try");
+const paths = routes.map((r) => r.path);
+assert.deepEqual(
+  paths,
+  ["/jev", "/jev/", PILL_ROUTE, "/jev/api", "/jev/api/try"],
+  "enabled dashboard registers the page (both spellings), the pill route and the full API",
+);
+const page = routes.find((r) => r.path === "/jev");
+const api = routes.find((r) => r.path === "/jev/api");
+const tryRoute = routes.find((r) => r.path === "/jev/api/try");
+const pillRoute = routes.find((r) => r.path === PILL_ROUTE);
 
 // GET page
 const pr = fakeRes();
@@ -69,6 +107,7 @@ assert.equal(snap0.status.model, "jev-mock");
 assert.equal(snap0.status.keyConfigured, true);
 assert.equal(snap0.status.guardActive, true);
 assert.equal(snap0.summary.calls, 0);
+assert.equal(snap0.usage.quota.used.dailyCalls, 29, "the usage panel rides along with the roll");
 console.log("PASS 2: /jev/api snapshot");
 
 // record + summary
@@ -107,10 +146,91 @@ await tryRoute.handler(fakeReq("POST", JSON.stringify({ state: "", questions: []
 assert.equal(br2.status, 400);
 console.log("PASS 5: invalid playground requests -> 400 with clear error");
 
-// disabled dashboard registers nothing
-const routes2 = [];
-mod.registerRoutes({ webServer: { register: (r) => routes2.push(r) } }, { dashboard: { enabled: false } }, () => ({}), () => ({}));
-assert.equal(routes2.length, 0, "disabled dashboard adds no routes");
-console.log("PASS 6: dashboard can be disabled via config");
+// --- PASS 6 (the 0.8.2 regression): with the dashboard OFF the mount path must
+// still answer, and the pill route must exist. This is the user-reported 404.
+{
+  const off = [];
+  mod.registerRoutes({ webServer: { register: (r) => off.push(r) } }, { dashboard: { enabled: false, basePath: "jev" } }, () => ({}), () => ({ usage: sampleSnapshot() }));
+  const offPaths = off.map((r) => r.path);
+  assert.deepEqual(offPaths, ["/jev", "/jev/", PILL_ROUTE], "a bare basePath still mounts /jev");
+  const statusRes = fakeRes();
+  await off[0].handler({ method: "GET" }, statusRes);
+  assert.equal(statusRes.status, 200, "/jev must not 404 while the dashboard is off");
+  assert.match(statusRes.body, /Jev 本机用量/);
+  assert.match(statusRes.body, /29/, "the status page shows today's calls");
+  assert.ok(!/决策仪表盘/.test(statusRes.body), "the full page stays behind dashboard.enabled");
+  const pillRes = fakeRes();
+  await off.find((r) => r.path === PILL_ROUTE).handler({ method: "GET" }, pillRes);
+  assert.equal(JSON.parse(pillRes.body).today.calls, 29);
+  console.log("PASS 6: disabled dashboard serves a status page and still feeds the pill");
+}
+
+// --- PASS 7: the mount path is normalized.
+assert.equal(normalizeBasePath("jev"), "/jev");
+assert.equal(normalizeBasePath("/jev"), "/jev");
+assert.equal(normalizeBasePath("/jev/"), "/jev");
+assert.equal(normalizeBasePath("  /custom/dash//  "), "/custom/dash");
+assert.equal(normalizeBasePath(""), "/jev");
+assert.equal(normalizeBasePath(undefined), "/jev");
+// "/" is the GUI's own root: a value that normalizes to nothing falls back to the
+// default mount rather than hijacking the app shell.
+assert.equal(normalizeBasePath("/"), "/jev");
+assert.equal(normalizeBasePath("///"), "/jev");
+console.log("PASS 7: base path normalization");
+
+// --- PASS 8: the pill payload is compact, JSON-safe and honest.
+{
+  const res = fakeRes();
+  await pillRoute.handler({ method: "GET" }, res);
+  const pill = JSON.parse(res.body);
+  assert.equal(pill.kind, "jev-usage-pill");
+  assert.equal(pill.ok, true);
+  assert.equal(pill.today.calls, 29);
+  assert.equal(pill.today.costUs, 0.000534);
+  assert.equal(pill.today.medianLatencyMs, 933);
+  assert.equal(pill.today.guards.denied, 2);
+  assert.equal(pill.used.dailyCalls, 29);
+  assert.equal(pill.limits.dailyCalls, 200);
+  assert.equal(pill.percent.dailyCalls, 14.5);
+  assert.equal(pill.status, "ok");
+  assert.equal(pill.enforce, false);
+  assert.equal(pill.session.calls, 29);
+  assert.deepEqual(pill.byTool, { jev_verify: 27, jev_decision: 1, jev_choose: 1 });
+  assert.deepEqual(pill.history, [ { day: "2026-10-05", calls: 8 }, { day: "2026-10-06", calls: 29 } ]);
+  assert.ok(!("roll" in pill), "the pill never ships the decision roll");
+  console.log("PASS 8: pill route projects a compact JSON payload");
+}
+
+// --- PASS 9: a broken or missing snapshot degrades to ok:false, never a 5xx.
+{
+  const host = [];
+  const boom = () => { throw new Error("usage module exploded"); };
+  mod.registerRoutes({ webServer: { register: (r) => host.push(r) } }, { dashboard: { enabled: false } }, {}, boom);
+  const pillRes = fakeRes();
+  await host.find((r) => r.path === PILL_ROUTE).handler({ method: "GET" }, pillRes);
+  assert.equal(pillRes.status, 200, "the pill route must never 5xx");
+  assert.equal(JSON.parse(pillRes.body).ok, false);
+  const pageRes = fakeRes();
+  await host[0].handler({ method: "GET" }, pageRes);
+  assert.equal(pageRes.status, 200, "the status page must survive a broken snapshot");
+  assert.match(pageRes.body, /Jev 本机用量/);
+  console.log("PASS 9: a broken snapshot degrades instead of 5xx");
+}
+
+// --- PASS 10: a custom base path keeps every surface.
+{
+  const host = [];
+  mod.registerRoutes({ webServer: { register: (r) => host.push(r) } }, { dashboard: { enabled: true, basePath: "/custom/" } }, () => ({
+    model: "jev-mock", baseURL: "https://api.typesafe.ai/v1", apiKey: "k",
+  }), () => ({ usage: sampleSnapshot() }));
+  const customPaths = host.map((r) => r.path);
+  for (const path of ["/custom", "/custom/", "/custom/api", "/custom/api/try", "/custom/api/usage", PILL_ROUTE]) {
+    assert.ok(customPaths.includes(path), "registers " + path);
+  }
+  const pageRes = fakeRes();
+  await host.find((r) => r.path === "/custom").handler({ method: "GET" }, pageRes);
+  assert.match(pageRes.body, /决策仪表盘/, "the full page is served on the custom base");
+  console.log("PASS 10: custom base path keeps page, API and pill");
+}
 
 console.log("ALL DASHBOARD TESTS PASSED");
