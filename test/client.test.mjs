@@ -30,12 +30,15 @@ globalThis.document = {
 const start = code.indexOf("factory: (require) => {") + "factory: (require) => {".length;
 const end = code.lastIndexOf("return module.exports;");
 const body = code.slice(start, end).replace(/^\s*/, "");
+// createElement keeps the children so a render can be searched for the exact
+// badge text the user sees; snapshotRef lets a test feed the scope snapshot.
 const reactStub = {
-  createElement: () => ({ __jsx: true }),
+  createElement: (type, props, ...kids) => ({ __jsx: true, type, props, kids }),
   useState: () => [undefined, () => {}],
   useEffect: () => {},
-  useSyncExternalStore: () => ({ value: {}, writable: true }),
+  useSyncExternalStore: () => snapshotRef,
 };
+let snapshotRef = { value: {}, writable: true };
 const factory = new Function("require", body + "\nreturn module.exports;");
 const moduleExports = factory((name) => (name === "react" ? reactStub : {}));
 assert.ok(moduleExports && typeof moduleExports.apply === "function", "apply exported");
@@ -143,7 +146,74 @@ function runApply(withSettingsScope) {
   console.log("PASS 3: dsh >= 0.1.7 (no settingsScope) keeps the inline tool views");
 }
 
-// --- PASS 4: a hostile host must never throw.
+/**
+ * Evaluate a react-stub element tree, calling function components the way a
+ * real renderer would (the stub's hooks are stateless, so one pass suffices).
+ * @param node - element / array / primitive returned by the react stub
+ */
+function render(node, depth = 0) {
+  if (depth > 40 || node == null || node === false) return null;
+  if (typeof node === "string" || typeof node === "number") return node;
+  if (Array.isArray(node)) return node.map((kid) => render(kid, depth + 1));
+  if (!node.__jsx) return null;
+  const kids = (node.kids || []).map((kid) => render(kid, depth + 1));
+  if (typeof node.type === "function") {
+    const props = Object.assign({}, node.props, { children: kids.length === 1 ? kids[0] : kids });
+    return render(node.type(props), depth + 1);
+  }
+  return Object.assign({}, node, { kids });
+}
+
+/**
+ * Collect every text node a rendered tree carries.
+ * @param node - rendered element / array / primitive
+ */
+function textOf(node, acc = []) {
+  if (node == null || node === false) return acc;
+  if (typeof node === "string" || typeof node === "number") { acc.push(String(node)); return acc; }
+  if (Array.isArray(node)) { for (const kid of node) textOf(kid, acc); return acc; }
+  if (node.kids) for (const kid of node.kids) textOf(kid, acc);
+  return acc;
+}
+
+// --- PASS 4 (the 0.8.1 regression): when the settings scope cannot decode the
+// value (the wrapped-schema bug), the card gets value === {} — it must still
+// advertise the key that is really configured instead of "未配置".
+{
+  const { keySourceOf, rawLayersOf, layerGet } = moduleExports.__internal;
+  // settings.yaml stores flat dotted keys; both shapes must resolve.
+  assert.equal(layerGet({ autoGuard: { maxJevCallsPerSession: 60 } }, "autoGuard.maxJevCallsPerSession"), 60);
+  assert.equal(layerGet({ "autoGuard.maxJevCallsPerSession": 60 }, "autoGuard.maxJevCallsPerSession"), 60);
+  assert.equal(layerGet(undefined, "apiKey"), undefined);
+  assert.equal(layerGet({ apiKey: "sk-live" }, "apiKey"), "sk-live");
+
+  assert.deepEqual(
+    keySourceOf({}, { apiKeyEnv: "TYPESAFE_API_KEY" }),
+    { keyState: "env", envName: "TYPESAFE_API_KEY" },
+    "a key configured in the raw layers must not read as an unconfigured card",
+  );
+  assert.equal(keySourceOf({}, { apiKey: "sk-live" }).keyState, "literal");
+  assert.equal(keySourceOf({}, {}).keyState, "none");
+  assert.equal(keySourceOf({ apiKeyEnv: "A" }, { apiKeyEnv: "B" }).envName, "A", "the decoded value wins over the layer");
+  assert.equal(keySourceOf({ apiKey: "sk-x", apiKeyEnv: "A" }).keyState, "literal");
+  assert.equal(rawLayersOf(null), null);
+  assert.deepEqual(rawLayersOf({ base: { model: "a" }, user: { model: "b" } }), { model: "b" });
+  assert.deepEqual(rawLayersOf({ base: { model: "a" } }), { model: "a" });
+
+  attrs.clear();
+  snapshotRef = { value: {}, base: { apiKeyEnv: "TYPESAFE_API_KEY" }, writable: true };
+  const { slotInjects } = runApply(true);
+  const card = slotInjects.find((s) => s.name === "settings.plugin.item").fn().next().value;
+  let tree = null;
+  assert.doesNotThrow(() => { tree = render(card.Comp({})); }, "an undecodable snapshot must not break the card");
+  const text = textOf(tree).join(" | ");
+  assert.ok(text.length > 0, "the card rendered text");
+  assert.match(text, /环境变量 TYPESAFE_API_KEY/, "the badge must name the configured credential reference");
+  assert.ok(!/未配置/.test(text), 'the card must not claim "未配置" while a key is configured');
+  console.log("PASS 4: an undecodable snapshot still advertises the configured key");
+}
+
+// --- PASS 5: a hostile host must never throw.
 assert.doesNotThrow(() => moduleExports.apply({}), "apply with empty ctx must not throw");
-console.log("PASS 4: apply is defensive on hostile hosts");
+console.log("PASS 5: apply is defensive on hostile hosts");
 console.log("ALL CLIENT TESTS PASSED");

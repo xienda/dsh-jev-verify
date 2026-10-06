@@ -8,7 +8,7 @@
  * a host upgrade can never silently cost the tools or the GUI form again.
  */
 import assert from "node:assert/strict";
-import { apply, Config, name, inject } from "../lib/index.js";
+import { apply, Config, SettingsConfig, name, inject } from "../lib/index.js";
 
 /**
  * Collect the paths whose schema marks meta.volatile, walking the LIVE schema
@@ -57,6 +57,16 @@ for (const field of ["enabled", "apiKey", "apiKeyEnv", "baseURL", "model", "time
   assert.ok(volatile.includes(field), "field " + field + " must be volatile so dsh >= 0.1.7 renders it in the entry form");
 }
 console.log("PASS 1: " + volatile.length + " config fields are volatile (entry-form editable)");
+
+// --- 1b) The REGISTERED schema must carry no such mark. On dsh <= 0.1.5 the
+//        mark makes schemastery resolve the field to a reference, and the
+//        settings wire ships it verbatim, so the GUI would receive {} for every
+//        field and refuse to decode its own card (0.7.3 … 0.8.0).
+assert.deepEqual(volatilePaths(SettingsConfig), [], "the registered schema must resolve to plain values, never volatile references");
+const wireProbe = JSON.parse(JSON.stringify(SettingsConfig({})));
+assert.equal(wireProbe.enabled, true, "registered values must cross the wire as plain JSON");
+assert.equal(wireProbe.apiKeyEnv, "TYPESAFE_API_KEY", "defaults must survive the wire");
+console.log("PASS 1b: the registered schema is wrap-free (the settings card can decode it)");
 
 // --- 2) New generation: no register() must not disturb tools or boot.
 {

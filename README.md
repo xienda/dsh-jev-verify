@@ -40,6 +40,43 @@ ledger and auditable via `jev_guard_status`.
 - `jev_verify` refuses to report numbers it did not measure;
 - the benchmark CLI (`bench/bench.mjs`) is dependency-free and reproducible with any key.
 
+## What's new in 0.8.1
+
+Fixes the Settings > Plugins card that showed **未配置 / unconfigured** and blank
+fields while a key *was* configured.
+
+Root cause: the schema registered with the settings service marked the GUI fields
+with the `volatile` marker. On a host whose schemastery understands it (3.18.4),
+`resolve()` replaces every marked field with a live reference object, and the
+settings service publishes `registration.resolved` verbatim — so the wire value
+was `{"enabled":{},"apiKey":{},"apiKeyEnv":{},"quota":{"enabled":{},…}}`. The GUI
+ships its own older schemastery (3.18.2), which cannot decode that
+(`$.enabled expected boolean but got [object Object]`), so the card silently fell
+back to an empty draft: badge "未配置", every field blank. The plugin's own reads
+were unaffected (it unwraps those references), which is why judgments, the guard
+and `jev_usage` kept working throughout.
+
+- **One field definition, two schemas.** `buildConfig()` builds both `Config`
+  (entry form; keeps the marker for hosts that understand it) and
+  `SettingsConfig` (plain — the one registered with the settings service), so the
+  23 fields cannot drift apart.
+- **The card no longer trusts a single decode path.** When the decoded value is
+  empty it reads the raw `base`/`user` layers the service already sends, says so
+  on the card ("服务端配置值未能解码…"), and stays editable and savable.
+- **A credential reference is not "configured".** The badge has three honest
+  states: literal key / `环境变量 <NAME>` (unverified) / none.
+- Regression tests: `test/config.test.mjs` asserts the registered schema is plain
+  and JSON-safe on the wire; `test/client.test.mjs` renders the card against an
+  undecodable snapshot and asserts the badge names the configured reference and
+  never says 未配置. `npm test` is 29/29.
+
+Reproduced on the wire (deployed plugin, dsh 0.1.5-rc.2, 2026-10-06):
+
+| schema | empty-object fields on the wire | GUI decode |
+| --- | --- | --- |
+| `Config` (entry-form only) | 8 + every `quota.*` | FAILS — `$.enabled expected boolean but got [object Object]` |
+| `SettingsConfig` (registered) | none | passes; `apiKeyEnv="TYPESAFE_API_KEY"`, `enabled=true`, `autoGuard.denyThreshold=0.8` |
+
 ## What's new in 0.8.0
 
 The usage/quota panel: Jev usage is now measured, stored and surfaced — as a
@@ -394,12 +431,16 @@ or ask the agent: *“run jev_verify”*.
 projections and optional hard budgets; `npm test` is 28/28. See the 0.8.0 section
 above. `docs/verification.md` records the measured accounting.
 
+**0.8.1**: the registered settings schema is plain (no `volatile` marker), so the
+Settings > Plugins card decodes again and never reports a configured key as
+unconfigured; the card also falls back to the raw config layers when a value
+cannot be decoded. `npm test` is 29/29. See the 0.8.1 section above.
+
 **Regression (2026-09-28, v0.7.0)**: in a headless profile with
 `autoGuard.enabled: true`, `jev_guard_status` reports the armed guard (tools
 list, `deny threshold 0.8`, budget) and `jev_overview` returns its board without
 the former `credentialRef` crash — the volatile-config unwrapping fix. `npm test`
-the former `credentialRef` crash — the volatile-config unwrapping fix. `npm test`
-passed 19/19 at that time (28/28 today).
+passed 19/19 at that time (29/29 today).
 
 ## Configuration
 

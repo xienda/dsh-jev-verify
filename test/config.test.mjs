@@ -13,7 +13,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Config, __internal } from "../lib/index.js";
+import { Config, SettingsConfig, __internal } from "../lib/index.js";
 
 const { credentialNameOf, toCredentialRef, resolveOptions, normalizeConfig, unwrapField, DEFAULT_API_KEY_ENV } = __internal;
 const ctx = { get: () => void 0 };
@@ -92,7 +92,7 @@ test("toCredentialRef degrades to null instead of throwing", () => {
   if (branded !== null) assert.equal(typeof branded, "object");
 });
 
-test("volatile fields resolve to live values through the accessor", () => {
+test("the entry-form schema marks GUI fields volatile", () => {
   assert.ok(Config, "@deepseek-ai/schemastery is installed");
   const parsed = Config({});
   // dsh marks GUI-editable fields volatile, so the raw field is a reference...
@@ -147,14 +147,40 @@ test("a volatile config resolves end to end (regression: the jev_overview crash)
   }
 });
 
-test("a live volatile write is observed without a restart", () => {
-  const parsed = Config({ enabled: false });
-  const ref = parsed.enabled;
-  assert.equal(ref.get(), false);
-  const write = ref[Symbol.for("cosmokit.volatile.write")];
-  if (typeof write === "function") {
-    write(true);
-    assert.equal(normalizeConfig(parsed).enabled, true);
+/**
+ * 0.7.3 … 0.8.0 regression: the schema registered with the settings service
+ * marked every GUI field volatile, so schemastery resolved those fields to
+ * Volatile references. dsh ships `registration.resolved` verbatim, JSON turns a
+ * reference into {}, and the GUI's own bundled schemastery 3.18.2 rejected the
+ * payload — "$.enabled expected boolean but got [object Object]" — so its card
+ * kept an empty draft and rendered "未配置" with every field blank.
+ */
+test("the registered settings schema resolves to plain, JSON-safe values", () => {
+  assert.ok(SettingsConfig, "settings schema present");
+  const parsed = SettingsConfig({ autoGuard: { enabled: true, denyThreshold: 0.8 } });
+  assert.equal(parsed.enabled, true);
+  assert.equal(parsed.apiKeyEnv, DEFAULT_API_KEY_ENV);
+  assert.equal(parsed.timeoutMs, 15000);
+  assert.equal(parsed.apiKey, void 0);
+  assert.equal(typeof parsed.autoGuard.denyThreshold, "number");
+  assert.equal(parsed.autoGuard.denyThreshold, 0.8);
+  // the exact payload the server puts on the wire: plain JSON that must still
+  // validate against the very schema the GUI rehydrates
+  const wire = JSON.parse(JSON.stringify(parsed));
+  for (const [key, val] of Object.entries(wire)) {
+    assert.notDeepEqual(val, {}, key + " must not serialize to an empty object");
   }
+  assert.doesNotThrow(() => SettingsConfig(wire), "the wire payload must re-validate");
+  assert.equal(SettingsConfig(wire).autoGuard.denyThreshold, 0.8);
+});
+
+test("a registered-schema value stays plain through a save round-trip", () => {
+  // The settings service re-resolves on every read, so a saved value reaches
+  // the plugin without a restart — which only holds while the registered
+  // schema hands back plain values instead of volatile references.
+  const parsed = SettingsConfig({ enabled: false });
+  assert.equal(parsed.enabled, false);
+  assert.equal(normalizeConfig(parsed).enabled, false);
+  assert.equal(SettingsConfig({ enabled: true }).enabled, true);
 });
 

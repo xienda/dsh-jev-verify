@@ -22,6 +22,24 @@ Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 A
 - `jev_verify` 拒绝报告任何未经实测的数字；
 - 独立的基准 CLI（`bench/bench.mjs`）零依赖，任何人可用任意 Key 复现发布的数据。
 
+## 0.8.1 更新
+
+修复「设置 → 插件」卡片明明配了 Key 却显示**未配置**、且所有字段为空的缺陷。
+
+根因：注册给设置服务的 schema 给 GUI 字段打了 `volatile` 标记。在认得该标记的宿主上（schemastery 3.18.4），`resolve()` 会把每个被标记字段换成活的引用对象，而设置服务**原样**发布 `registration.resolved`——于是上线值成了 `{"enabled":{},"apiKey":{},"apiKeyEnv":{},"quota":{"enabled":{},…}}`。GUI 自带的是更老的 schemastery（3.18.2），无法解码这个形状（真实报错 `$.enabled expected boolean but got [object Object]`），卡片便静默退回空草稿：徽章「未配置」、字段全空。插件自身的配置读取不受影响（会解包这些引用），所以判定、护栏与 `jev_usage` 一直正常。
+
+- **一份字段定义，两个 schema。** 由 `buildConfig()` 同时造出 `Config`（入口表单用；保留标记，供认得它的宿主）与 `SettingsConfig`（纯 schema，真正注册给设置服务的那个），23 个字段不可能漂移。
+- **卡片不再只有一条解码路径。** 解码值为空时改读服务端本来就会下发的原始 `base`/`user` 图层，并在卡片上明说（「服务端配置值未能解码…」），字段依旧可编辑、可保存。
+- **「凭据引用」不等于「已配置」。** 徽章三态：明文 Key / `环境变量 <NAME>`（未校验）/ 无。
+- 回归测试：`test/config.test.mjs` 断言注册用 schema 上线后是普通值且可 JSON 往返；`test/client.test.mjs` 用「解码失败」的快照渲染真实卡片，断言徽章给出真实凭据引用、且整棵树绝不出现「未配置」。`npm test` 29/29。
+
+线上实测（用部署副本，dsh 0.1.5-rc.2，2026-10-06）：
+
+| schema | 上线值里的空对象字段 | GUI 解码 |
+| --- | --- | --- |
+| `Config`（仅入口表单） | 8 个 + 全部 `quota.*` | 失败——`$.enabled expected boolean but got [object Object]` |
+| `SettingsConfig`（注册用） | 无 | 通过；`apiKeyEnv="TYPESAFE_API_KEY"`、`enabled=true`、`autoGuard.denyThreshold=0.8` |
+
 ## 0.8.0 更新
 
 使用额度面板：Jev 的用量现在被实测、留存并展示——工具视图、概览卡与独立看板三处可见。
@@ -213,7 +231,9 @@ TYPESAFE_API_KEY=... node bench/bench.mjs --repeat 3 # 延迟稳定性
 
 **0.8.0**：使用额度面板——本机实测用量、滚动窗口、预测与可选硬性预算；`npm test` 28/28，详见上面的「0.8.0 更新」与 `docs/verification.md`。
 
-**回归验证（2026-09-28，v0.7.0）**：在 headless profile（`autoGuard.enabled: true`）中，`jev_guard_status` 正确报告已武装的护栏（工具清单、`deny threshold 0.8`、预算），`jev_overview` 正常返回看板，不再出现此前的 `credentialRef` 崩溃——即 volatile 配置解包修复；当时 `npm test` 19/19 通过（今天为 28/28）。
+**0.8.1**：注册给设置服务的 schema 改为纯 schema（不带 `volatile` 标记），设置卡片重新能解码，绝不再把已配置的 Key 报成「未配置」；解码值不可用时卡片回退读原始配置图层。`npm test` 29/29，详见上面的「0.8.1 更新」。
+
+**回归验证（2026-09-28，v0.7.0）**：在 headless profile（`autoGuard.enabled: true`）中，`jev_guard_status` 正确报告已武装的护栏（工具清单、`deny threshold 0.8`、预算），`jev_overview` 正常返回看板，不再出现此前的 `credentialRef` 崩溃——即 volatile 配置解包修复；当时 `npm test` 19/19 通过（今天为 29/29）。
 
 ## 配置项
 

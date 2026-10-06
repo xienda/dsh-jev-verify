@@ -283,6 +283,28 @@
 - 验证：`npm test` **28/28 全绿**（2,538 ms）。新增 `test/usage.test.mjs` 8 组断言（空态与诚实说明、单次判定成本 = tokens×常量、27 题批量记 27 次调用且护栏事件不计数、额度状态与三种硬停、持久化与按 historyDays 跨天裁剪、重建实例重载同一文件、reset 清空、全部格式化函数与两种负载形态）；`test/toolview.test.mjs` 新增 `usage` 视图渲染用例；`test/boot.test.mjs` 与 `test/compat.test.mjs` 断言六个工具（含 `jev_usage`）与新的 volatile quota 字段。
 - 踩坑（0.7.5 审计的延续）：schemastery 的 `.step(n)` 是**以 min 为偏移**的等差数列，`z.number().step(5).min(1)` 只接受 1,6,11,…，导致合法的 80 被拒（`$.quota.warnAtPercent expected number multiple of 5 but got 80`）；改为 `.step(5).min(0)` 后通过。另外，本轮写代码时**再次被运行中的 0.7.4 旧护栏拦下 3 次**（写入内容里出现危险命令字面量）——与 0.7.5 记录一致，也是 0.7.5 位置感知重构必要性的又一次复现。
 
+### 2026-10-06（v0.8.1：设置卡片「未配置」与字段全空的根因修复）
+
+- 症状（用户提问「额度面板在哪里显示，还有本地不是有 jev 的 key 吗，为什么 jev 面板里还是显示未配置」）：`~/.dsh/.env` 里有 `TYPESAFE_API_KEY`，对话内 `jev_overview` 也报 `API Key 已配置`（`keyConfigured: true`），但「设置 → 插件 → Jev」卡片徽章显示「未配置」、所有字段为空、保存看不出效果。
+- 逐层定位（全部在本机复现，可重跑）：
+  1. 设置服务直接发布解析值：`@deepseek-ai/dsh-settings/lib/index.js:364` `value: registration.resolved`，全库 grep `simplify` 0 命中；`redactSecrets`（同文件 `:16-24`）只剥离 `meta.role === "secret"`。
+  2. 插件注册的 schema 给面向 GUI 的字段打了 volatile 标记（`lib/index.js` 的 `vol()` 助手）。宿主解析到的 schemastery 实测为 **3.18.4**（`profiles/web/node_modules/.pnpm/@deepseek-ai+schemastery@3.18.4/node_modules/@deepseek-ai/schemastery/lib/index.cjs`），其 `src/index.ts:769` `return schema.meta.volatile ? createVolatile(...) : default` 把被标记字段解析成 Volatile 引用对象。
+  3. 因此上线值里 `enabled`/`apiKey`/`apiKeyEnv`/`baseURL`/`model`/`timeoutMs`… 全是 `{}`（实测见下表）。
+  4. GUI 用的是自带的 schemastery **3.18.2**（`dsh-client-ui-settings/lib/client.js:207` 起是 vendored 源码；整个 dsh 安装 grep `volatile` 在 dsh-settings 与 dsh-client-ui-settings 中 0 命中），`decode()`（同文件 `:1107-1117`）校验失败即返回 `undefined`，`derive()` 里 `if (decoded === void 0) return;` 使草稿值恒为空。
+  5. 插件卡片读到 `value === {}`，徽章按 `apiKey`/`apiKeyEnv` 都缺失判为「未配置」（`client/client.js` 徽章三态处）。
+- 运行侧不受影响的原因：`lib/index.js:202-240` 的 `isVolatileRef`/`unwrapField`/`normalizeConfig` 会深解包这些引用，`resolveOptions()` 先 normalize 再读配置——所以 `jev_overview.keyConfigured`、`jev_guard_status.denyThreshold=0.8` 一直是正常的；被污染的只有人看的卡片。
+- 实测探针 `_wire_probe.mjs`（导入**部署副本** `.pnpm/dsh-jev-verify@file+vendor/...` 的真实模块，并用 dsh 自带 schemastery 复刻 GUI 的 `new Schema(ser)(wire)` 解码）：
+
+| schema | 上线值里的空对象字段 | apiKeyEnv | enabled | quota | GUI 解码 |
+| --- | --- | --- | --- | --- | --- |
+| `Config`（仅入口表单） | `enabled, apiKey, apiKeyEnv, baseURL, model, timeoutMs, maxQuestionsPerCall, verifyEnabled` + 全部 `quota.*` | `{}` | `{}` | `{"enabled":{},...}` | **失败**：`$.enabled expected boolean but got [object Object]` |
+| `SettingsConfig`（注册用） | 无 | `"TYPESAFE_API_KEY"` | `true` | `{"enabled":true,"enforce":false,"warnAtPercent":80,...}` | **通过** |
+
+- 修复（0.8.1）：新增工厂 `buildConfig(vol)`，由它一次造出两个 schema——`Config`（入口表单用，保留 volatile 标记，供认得该标记的宿主）与 `SettingsConfig`（纯 schema、不带任何标记，注册给设置服务的就是它，`lib/index.js:983` `settings.register(SETTINGS_NAMESPACE, SettingsConfig, { base: normalizeConfig(config) })`）。字段定义只有一份，不会漂移。
+- 客户端加固：解码值为空时回退读 `snapshot.base`/`snapshot.user` 原始图层（`layerGet` 同时支持扁平点号键，以兼容 settings.yaml 的写法），卡片显式提示「服务端配置值未能解码（schema 版本差异），下方按原始配置图层显示；修改与保存不受影响。」；凭据徽章改为三态——明文 Key / `环境变量 <NAME>`（未校验，title 说明服务端按引用解析、真相看 `jev_overview`）/ 无，且取值走新抽出的纯函数 `keySourceOf(value, layers)`。
+- 回归测试：`test/config.test.mjs`（注册 schema 的上线值为普通 JSON、顶层无 `{}`、往返不抛）、`test/compat.test.mjs` PASS 1b（`assert.deepEqual(volatilePaths(SettingsConfig), [])` + 线上 `enabled === true` / `apiKeyEnv === "TYPESAFE_API_KEY"`）、`test/client.test.mjs` PASS 4（自建迷你渲染器求值真实卡片组件，喂「解码失败」快照，断言徽章文本含 `环境变量 TYPESAFE_API_KEY` 且整棵渲染树不含「未配置」）。`npm test` **29/29 全绿**（2,473 ms，此前 28/28）。
+- 生效条件：服务端 schema 改动需重启 `dsh web` 宿主才生效（客户端半边只需刷新页面）；三副本（源 `D:\lab\skill\jev`、部署 `D:\lab\jev`、pnpm store `.pnpm/dsh-jev-verify@file+vendor/...`）已逐文件哈希核对一致。
+
 ## 与 dsh-jev/官方博客声明的边界
 
 - 200x 提速、1/400 成本等对比数字依赖具体基线模型与工作负载，本插件不搬运这些相对值，只发布可直接核验的绝对值（延迟、成本、准确率、校准）。

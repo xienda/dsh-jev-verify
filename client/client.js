@@ -14,7 +14,7 @@
  * Hand-written, build-free, defensive: any failure degrades only this card.
  */
 window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
-  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.8.0";
+  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.8.1";
   "use strict";
   var module = { exports: {} };
   var react = require("react");
@@ -236,6 +236,49 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     }, obj);
   }
 
+  /**
+   * Read a dotted path, tolerating a store that keeps the dots inside the key
+   * (settings.yaml holds `autoGuard.maxJevCallsPerSession` as one flat key).
+   */
+  function layerGet(obj, path) {
+    if (obj == null) return void 0;
+    var hit = pathGet(obj, path);
+    if (hit === void 0 && Object.prototype.hasOwnProperty.call(obj, path)) hit = obj[path];
+    return hit;
+  }
+
+  /**
+   * The settings scope decodes its payload with the schemastery it bundles,
+   * which can be older than the one this plugin resolved against. When that
+   * decode drops the value the snapshot still carries the two raw layers
+   * (`base` = this plugin's composed config, `user` = saved overrides), with
+   * only secrets redacted; reading those keeps the card honest and editable
+   * instead of painting an empty form.
+   */
+  function rawLayersOf(snapshot) {
+    if (!snapshot) return null;
+    var base = snapshot.base && typeof snapshot.base === "object" ? snapshot.base : null;
+    var user = snapshot.user && typeof snapshot.user === "object" ? snapshot.user : null;
+    if (!base && !user) return null;
+    return Object.assign({}, base || {}, user || {});
+  }
+
+  /**
+   * Which key source the badge must advertise, read from the decoded value and
+   * — when the scope could not decode it — from the raw layers. Kept pure so
+   * the "未配置 while a key is right there" regression is testable offline.
+   */
+  function keySourceOf(value, layers) {
+    var read = function (path) {
+      var hit = layerGet(value, path);
+      if (hit === void 0 && layers) hit = layerGet(layers, path);
+      return hit;
+    };
+    var literal = read("apiKey");
+    var env = read("apiKeyEnv");
+    return { keyState: literal ? "literal" : env ? "env" : "none", envName: env };
+  }
+
   function Chevron(props) {
     return h("svg", {
       className: "djev-chevron" + (props.open ? " djev-chevronOpen" : ""),
@@ -284,6 +327,10 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     var scope = props.scope;
     var snapshot = useSyncExternalStore(scope.subscribe.bind(scope), scope.getSnapshot.bind(scope));
     var value = (snapshot && snapshot.value) || {};
+    // A decode failure (older bundled schemastery vs. a wider server schema)
+    // must never make the card look "unconfigured": fall back to the raw layers.
+    var layers = value && Object.keys(value).length > 0 ? null : rawLayersOf(snapshot);
+    var decoded = layers === null;
     var writable = snapshot ? !!snapshot.writable : true;
 
     var [open, setOpen] = useState(false);
@@ -302,9 +349,10 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     }, [savedAt]);
 
     function current(path) {
-      return draft != null && Object.prototype.hasOwnProperty.call(draft, path)
-        ? draft[path]
-        : pathGet(value, path);
+      if (draft != null && Object.prototype.hasOwnProperty.call(draft, path)) return draft[path];
+      var hit = layerGet(value, path);
+      if (hit === void 0 && layers) hit = layerGet(layers, path);
+      return hit;
     }
     function edit(path, val) {
       setDraft(function (prev) {
@@ -346,7 +394,11 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     // Three states, not two: a bare env-var/credential REFERENCE says where the
     // key would come from at launch, not that it resolved. Calling that
     // "configured" would paint a green badge over a key that may not exist.
-    var keyState = value.apiKey ? "literal" : value.apiKeyEnv ? "env" : "none";
+    var keySource = keySourceOf(value, layers);
+    var keyState = keySource.keyState;
+    var envName = keySource.envName;
+    var envLabel = String(envName || "TYPESAFE_API_KEY");
+    if (envLabel.length > 22) envLabel = envLabel.slice(0, 21) + "…";
     /**
      * Numeric fields hold text while they are being edited, so validity is
      * checked here against the field spec (min/max from the same schema the
@@ -416,13 +468,14 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
         dirty ? h("span", { className: "djev-tag" }, "未保存") : null,
         h("span", {
           className: "djev-tag" + (keyState === "literal" ? " djev-tagOk" : keyState === "env" ? "" : " djev-tagWarn"),
-          title: keyState === "literal" ? "已配置明文 Key"
-            : keyState === "env" ? "按凭据引用/环境变量名读取；启动时是否真的存在未经验证"
-            : "尚未配置 Key，工具会明确报错",
-        }, keyState === "literal" ? "已配置" : keyState === "env" ? "环境变量（未校验）" : "未配置"),
+          title: keyState === "literal" ? "插件配置里保存了明文 Key"
+            : keyState === "env" ? "服务端每次调用时按这个引用解析 Key（" + String(envName || "TYPESAFE_API_KEY") + "）；卡片显示的只是引用本身，是否真的解析到请看 jev_overview 的「API Key 已配置」"
+            : "没有明文 Key，也没有凭据引用，jev 工具会明确报错",
+        }, keyState === "literal" ? "已配置" : keyState === "env" ? "环境变量 " + envLabel : "未配置"),
         h(Chevron, { open: open })),
       open ? h("div", { className: "djev-body" },
         !writable ? h("p", { className: "djev-hint", role: "status" }, "当前部署为只读，无法保存。") : null,
+        !decoded ? h("p", { className: "djev-hint", role: "status" }, "服务端配置值未能解码（schema 版本差异），下方按原始配置图层显示；修改与保存不受影响。") : null,
         body,
         h("div", { className: "djev-footer" },
           savedAt > 0 && !failed
@@ -1146,7 +1199,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     // Internal, for the offline render tests only: decoding the wire answer
     // shapes is the part of this bundle most worth pinning down, and it needs
     // no DOM. Not part of the plugin's service surface.
-    __internal: { readAnswer: readAnswer, contentText: contentText, parseJSON: parseJSON },
+    __internal: { readAnswer: readAnswer, contentText: contentText, parseJSON: parseJSON, keySourceOf: keySourceOf, rawLayersOf: rawLayersOf, layerGet: layerGet },
   };
   return module.exports;
 }});
