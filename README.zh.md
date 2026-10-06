@@ -2,7 +2,7 @@
 
 把 TypeSafe AI 的 **Jev（System One 决策模型）**接入 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）的一等公民插件。
 
-Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 API 调用**返回**带校准概率的类型化判定**（官方宣称 ~70–500ms；我们实测中位 266–484 ms、p95 825–1468 ms（单轮峰值约 1.5 s，网络拥堵时可达约 5 s））。本插件把它封装成 Agent 工具，附加可选的**自动护栏**（风险/循环检测），并且坚持「验证过的才叫有效」：
+Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 API 调用**返回**带校准概率的类型化判定**（官方宣称 ~70–500ms；我们实测中位 266–484 ms、p95 825–1468 ms（单轮峰值约 1.5 s，网络拥堵时可达约 5 s））。本插件把它封装成 Agent 工具，附加可选的**自动护栏**（风险/循环检测）与一个只报本机实测的**使用额度面板**，并且坚持「验证过的才叫有效」：
 
 | 工具 | 作用 | 该在什么时候调用 |
 | --- | --- | --- |
@@ -11,6 +11,7 @@ Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 A
 | `jev_verify` | 对**线上真实 API** 以 6 路并发运行冻结的 27 题带标签基准（紧迫度、垃圾、毒性、隐私数据、部门路由、意图、检索类型、优先级、严重度、满意度、护栏判定；0.7.5 实测 27 次调用墙钟 4.96 s（复测 3.999 s），串行需 10.1 s）：总体准确率与高置信子集准确率、中位/p95/min/max 延迟、置信校准、token、成本，以及**全部**误判清单（并单列其中属于高置信误判的）。 | 确认端点健康、对比模型版本、排查回归——不要例行调用：一轮就是 27 次真实 API 调用（约 8.7K input tokens、≈$0.0004）。 |
 | `jev_guard_status` | 自动护栏只读审计：确定性规则与 Jev 兜底**分别计数**（`checks` / `jevCalls` / `denied` / `deterministicDenied` / `auditCalls`）、受护栏工具名、`denyThreshold`、循环检测计数、本会话剩余预算。 | 确认护栏是否武装、实际触发过几次，或解释某条命令为什么被拦。护栏关闭时会如实说明，而不是报一堆 0。 |
 | `jev_overview` | 本会话 Jev 账本只读快照：最近判定与择案（含置信度）、延迟中位与 p95、问题类型分布、护栏事件、累计 tokens 与成本，以及 Key/护栏/阈值状态。 | 用户问「Jev 做了什么 / 拦了什么 / 花了多少」，或需要不重启会话就核对端点与预算状态时。账本以插件实例生命周期为起点；护栏计数在 `jev_guard_status`。 |
+| `jev_usage` | 本机实测的 Jev 用量与（可选）本地预算：滚动窗口（今日 / 7 天 / 30 天 / 全部 / 本会话）、调用数、input/output tokens、估算成本、延迟中位与 p95、问题类型与按工具分布、全天用量预测；配合 `quota.enabled` + `quota.enforce` 可在调用前硬停。 | 用户问「Jev 用了多少 / 花了多少」，或你想在一批判定前先核对预算时。只读本地状态，不发起 API 调用。TypeSafe 没有余额接口，这里报的是本机实测用量而非供应商余额。 |
 
 **自动护栏模式**（可选开启 `autoGuard.enabled`）：在 shell 类工具（bash/pwsh/run_code/terminal）执行前，先跑零成本的确定性层。7 条**硬规则**直接拦下灾难性、不可逆的操作：文件系统、盘根或目录树的递归删除、磁盘格式化、数据库破坏语句、凭据外泄、被强制推送的 git 历史；3 条**软规则**（主机重启或关机、未强推的 git 历史重写、恒真条件的 DELETE/UPDATE）交给 **Jev** 判定（noul 超阈值即拒绝）。硬规则只在**可执行位置**触发，所以你只是引用或描述一条危险命令时绝不会被硬拦；落在别处的硬模式会降级为交给 Jev 的提示。Jev 不可用时 fail-open 放行并告警，绝不假装检查过。循环守卫对连续相同工具的调用做语义停滞判定，只注入纠偏建议、不阻断。所有判定（确定性与 Jev）都会写进会话账本，可通过 `jev_guard_status` 审计。
 
@@ -20,6 +21,17 @@ Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 A
 - 每次 `jev_decision` 结果都带回 model、延迟与 token 用量，可审计；
 - `jev_verify` 拒绝报告任何未经实测的数字；
 - 独立的基准 CLI（`bench/bench.mjs`）零依赖，任何人可用任意 Key 复现发布的数据。
+
+## 0.8.0 更新
+
+使用额度面板：Jev 的用量现在被实测、留存并展示——工具视图、概览卡与独立看板三处可见。
+
+- **`jev_usage`——可直接调用的额度面板。** 每次判定、择案、自检与护栏事件都会本地记账，附实测 input tokens、成本、延迟、问题类型分布与工具名。工具返回滚动窗口（今日 / 7 天 / 30 天 / 全部 / 本会话）、每日调用与成本序列、按当前速率推算的「照这个速度还有 N 小时触顶」预测，以及可选的硬性停止。
+- **只报本地预算，不编造供应商余额。** TypeSafe 没有余额或额度接口（`GET /v1/usage`、`/v1/quota`、`/v1/account`、`/v1/balance`、`/v1/credits`、`/v1/limits`、`/v1/billing` 全部 404，只有 `/v1/models` 有响应）。因此面板只报本机实测用量，对照你自己设的上限：`quota.dailyCallLimit`、`quota.dailyCostLimitUsd`、`quota.sessionCallLimit` 与 `warnAtPercent`。这条边界同时印在文本结果与卡片上——绝不编造余额。
+- **可选硬停（`quota.enforce`）。** 在 `enabled` + `enforce` 下，会越过所设上限的调用在发起 API 请求**之前**就被拒绝，并说明触顶的是哪条预算；默认只展示、不拦截。
+- **持久化默认关闭。** 默认只存内存（400 条样本）；设 `quota.persist: true` 可把最多 `quota.historyDays`（默认 30）天的每日历史写入 `$DSH_HOME/jev-usage.json`（临时文件 + rename，失败放行、不影响判定）。
+- **三处都可见。** `jev_overview` 增加额度区块；独立看板（`dashboard.enabled`）增加额度区（进度条、预测与 30 天走势图）；设置卡增加「使用额度」组；`jev_verify` 现在也会记录 27 次调用、tokens 与成本，而不只是准确率文本。
+- **测试 28 项全绿**——新增 `test/usage.test.mjs` 覆盖空态、token 记账、批量调用、额度状态与硬停、跨天持久化与裁剪、重载、重置以及全部格式化函数。
 
 ## 0.7.5 更新
 
@@ -76,9 +88,9 @@ Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 A
 
 - **仅文档同步（0.7.1 的代码与 0.7.0 一致）**：验证报告补齐完整实测历史——2026-09-21 基准与护栏实测、2026-09-23 GUI 卡片/设置卡重做/对话内视图、2026-09-26 两代设置 API 兼容、2026-09-28 v0.7.0 回归；`docs/verification.md` 现为 208 行完整记录。行为与 0.7.0 相同。
 - **每个工具都有结构化对话内视图**：工具结果新增 `presentationMeta` 投影（`kind: decision | overview | guard | verify`），对话里直接渲染判定卡、护栏看板与实测报告——答案、置信度条、状态标签与统计格，而不再是原始文本；缺少 `meta` 时自动回退解析工具文本。
-- **完整插件设置卡**：「设置 → 插件 → 插件配置 → Jev」现在覆盖全部选项：凭据（Key、凭据引用、API 地址、模型、超时、问题数上限）、工具开关、整组自动护栏（安全/循环开关、受护栏工具清单、拦截阈值、Jev 预算、循环参数）与看板（开关 + 路径），带数值校验与未保存状态处理。
+- **完整插件设置卡**：「设置 → 插件 → 插件配置 → Jev」现在覆盖全部选项：凭据（Key、凭据引用、API 地址、模型、超时、问题数上限）、工具开关、整组自动护栏（安全/循环开关、受护栏工具清单、拦截阈值、Jev 预算、循环参数）、看板（开关 + 路径）与使用额度面板（开关、硬停、告警阈值、每日调用 / 每日成本 / 本会话上限、持久化、历史天数），带数值校验与未保存状态处理。
 - **配置处理加固**：使用前会解包 schemastery 的 volatile 字段（`.volatile()`），因此对象形态的 `apiKeyEnv` 不再让 `credentialRef(...)` 崩溃，`autoGuard.enabled` / `dashboard.enabled` 真正生效，数值型选项也按数字读取。
-- **测试 27 项全绿**（`npm test`）：覆盖启动、客户端渲染、工具视图、设置卡、看板、护栏与展示投影。
+- **测试 28 项全绿**（`npm test`）：覆盖启动、客户端渲染、工具视图、设置卡、看板、护栏、额度记账与展示投影。
 
 ## 为什么是 Jev
 
@@ -172,8 +184,11 @@ dsh plugin --profile web add dsh-jev-verify
 - `jev_overview` — 决策看板：状态标签（模型 / Key / 护栏 / 阈值）、8 个统计格（判定数、实测数、拦截数、提示数、中位延迟、平均置信度、input tokens、累计成本）以及最近的判定与护栏事件。
 - `jev_verify` — 线上实测报告：准确率、答对数、高置信准确率、中位与 p95 延迟、token、成本与误判用例。
 - `jev_guard_status` — 护栏卡片：受护栏工具、拦截阈值、本会话预算、安全与循环计数、最近一次受检工具。
+- `jev_usage` — 使用额度面板：额度状态、今日调用与成本、三条预算进度条、全天用量预测、按留存历史的每日走势图与按工具分布，底部写明诚实边界。
 
 `jev_overview` 背后的会话账本**永远记录**（内存 ring，上限 300 条事件）——0.7.5 起不再等独立页面开启。需要独立网页版时仍可开启：`dashboard.enabled: true` 后访问 http://127.0.0.1:3080/jev；只有开启后事件才会同时追加到 `$DSH_HOME/jev-roll.jsonl` 供外部工具使用。
+
+同一份账本也是**使用额度面板**（`jev_usage`、`jev_overview` 的额度区块、看板额度区）的数据源。它只统计本机：TypeSafe 没有余额接口，所以面板绝不宣称供应商侧余额——只有实测调用数、tokens 与成本，对照你配置的本地预算。
 
 ## 验证（实测、带日期）
 
@@ -196,7 +211,9 @@ TYPESAFE_API_KEY=... node bench/bench.mjs --repeat 3 # 延迟稳定性
 
 **0.7.5**：三路审计（服务端 / 客户端 / 打包）修复批次，详见上面的「0.7.5 更新」与 `docs/verification.md`；`npm test` 27/27。
 
-**回归验证（2026-09-28，v0.7.0）**：在 headless profile（`autoGuard.enabled: true`）中，`jev_guard_status` 正确报告已武装的护栏（工具清单、`deny threshold 0.8`、预算），`jev_overview` 正常返回看板，不再出现此前的 `credentialRef` 崩溃——即 volatile 配置解包修复；当时 `npm test` 19/19 通过（今天为 27/27）。
+**0.8.0**：使用额度面板——本机实测用量、滚动窗口、预测与可选硬性预算；`npm test` 28/28，详见上面的「0.8.0 更新」与 `docs/verification.md`。
+
+**回归验证（2026-09-28，v0.7.0）**：在 headless profile（`autoGuard.enabled: true`）中，`jev_guard_status` 正确报告已武装的护栏（工具清单、`deny threshold 0.8`、预算），`jev_overview` 正常返回看板，不再出现此前的 `credentialRef` 崩溃——即 volatile 配置解包修复；当时 `npm test` 19/19 通过（今天为 28/28）。
 
 ## 配置项
 
@@ -225,6 +242,14 @@ TYPESAFE_API_KEY=... node bench/bench.mjs --repeat 3 # 延迟稳定性
 | `autoGuard.determinismFirst` | true | 先跑免费的确定性检查再交给 Jev |
 | `dashboard.enabled` | false | 是否提供独立看板页面 |
 | `dashboard.basePath` | `/jev` | 独立看板的访问路径 |
+| `quota.enabled` | true | 是否注册 `jev_usage` 并记录用量 |
+| `quota.enforce` | false | 是否会越过本地预算时硬性拦截 |
+| `quota.warnAtPercent` | 80 | 用量百分比达到多少时转为「告警」状态 |
+| `quota.dailyCallLimit` | 0 | 本地每日调用上限（0 = 不限） |
+| `quota.dailyCostLimitUsd` | 0 | 本地每日成本上限（美元，0 = 不限） |
+| `quota.sessionCallLimit` | 0 | 本地本会话调用上限（0 = 不限） |
+| `quota.persist` | false | 是否把每日历史写入 `$DSH_HOME/jev-usage.json` |
+| `quota.historyDays` | 30 | 保留的每日历史天数（1–365） |
 
 ## 相关项目
 

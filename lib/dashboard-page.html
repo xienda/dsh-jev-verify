@@ -17,11 +17,18 @@ polyline{fill:none;stroke:var(--blue);stroke-width:1.6}
 .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;background:var(--card);border:1px solid var(--line);margin:2px 4px 2px 0}
 .verdict{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:10px;white-space:pre-wrap;font:12.5px/1.6 Consolas,Menlo,monospace}
 .trywait{color:var(--warn)}
+.bar{height:8px;background:#010409;border:1px solid var(--line);border-radius:999px;overflow:hidden;margin-top:6px}
+.bar>i{display:block;height:100%;background:var(--acc)}.bar.warn>i{background:var(--warn)}.bar.bad>i{background:var(--bad)}
+.qline{margin:8px 0}
 @media(max-width:760px){.grid2{grid-template-columns:1fr}}
 </style></head><body>
 <h1>Jev <span class="dim">System One · 决策仪表盘</span></h1>
 <div id="status" class="dim">加载中…</div>
 <div class="cards" id="cards"></div>
+<h2>使用额度 <span class="dim">本机实测 + 本地自设额度（TypeSafe 无余额接口）</span></h2>
+<div id="quotastatus" class="dim">-</div>
+<div class="cards" id="quotacards"></div>
+<div class="grid2"><div><h2>近 30 天调用趋势</h2><svg id="qtrend" preserveAspectRatio="none" viewBox="0 0 600 90"></svg></div><div><h2>额度分解</h2><div id="qbreak"></div></div></div>
 <h2>决策流（最近）</h2>
 <table><thead><tr><th>时间</th><th>内容</th><th>答案 / 置信度</th><th>延迟</th><th>成本</th></tr></thead><tbody id="roll"></tbody></table>
 <h2>延迟趋势（最近 60 次调用）</h2>
@@ -40,6 +47,20 @@ function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){return{
 function fmtMoney(u){return (u==null?'-':'$'+(Math.round(u*1e6))+'µ')}
 function fmtQ(questions){if(!questions||!questions.length)return '-';return questions.map(function(q){return q.name+'='+esc(String(q.value==null?'?':q.value))+(q.confidence!=null?' ('+Math.round(q.confidence*100)+'%)':'')}).join('<br>')}
 function typePills(counts){var keys=Object.keys(counts||{});if(!keys.length)return '<span class="dim">暂无</span>';return keys.map(function(k){return '<span class="pill">'+esc(k)+' × '+counts[k]+'</span>'}).join('')}
+function fmtUsd(u){if(u==null)return '-';var v=Number(u)||0;if(v>0&&v<1e-6)return '<$0.000001';return '$'+v.toFixed(6)}
+function fmtDur(ms){if(ms==null||ms<=0)return '-';var m=Math.round(ms/60000);if(m<60)return m+'m';return Math.floor(m/60)+'h '+(m%60)+'m'}
+function pctCell(label,used,limit,percent){var p=(percent==null||isNaN(percent))?null:Math.round(percent);var cls=p==null?'':(p>=100?'bad':(p>=80?'warn':''));var txt=(limit==null)?('本机实测 '+used+'（未设上限）'):(used+' / '+limit+'  ·  '+p+'%');return '<div class="qline"><div class="dim">'+esc(label)+'</div><div>'+esc(txt)+'</div>'+(p==null?'':'<div class="bar '+cls+'"><i style="width:'+Math.min(100,p)+'%"></i></div>')+'</div>'}
+function renderUsage(u){
+if(!u||u.error){el('quotastatus').innerHTML='<span class="dim">额度面板不可用'+(u&&u.error?'：'+esc(u.error):'')+' — 需要 0.8.0 服务端；重启宿主后生效</span>';el('quotacards').innerHTML='';el('qbreak').innerHTML='';el('qtrend').innerHTML='';return;}
+var q=u.quota||{};var used=q.used||{};var lim=q.limits||{};var pc=q.percent||{};var w=u.windows||{};var today=w.today||{};var sess=w.session||{};
+var cls=q.status==='exceeded'?'bad':(q.status==='warn'?'warn':'ok');
+el('quotastatus').innerHTML='<span class="'+cls+'">状态 '+esc(q.status||'ok')+'</span> · 告警阈值 '+esc(q.warnAtPercent==null?80:q.warnAtPercent)+'% · 到本日重置 '+esc(fmtDur(q.resetInMs))+(q.enforce?' · <span class="warn">超额硬停已开启</span>':' · <span class="dim">仅展示（quota.enforce=false）</span>')+' · 单价 $'+(u.priceUsdPerMTok==null?0.042:u.priceUsdPerMTok)+'/MTok 输入';
+var cards=[['今日调用',String(used.dailyCalls||0)+' / '+(lim.dailyCalls==null?'∞':lim.dailyCalls)],['今日成本',fmtUsd(used.dailyCostUsd)+' / '+(lim.dailyCostUsd==null?'∞':fmtUsd(lim.dailyCostUsd))],['本实例调用',String(used.sessionCalls||0)+' / '+(lim.sessionCalls==null?'∞':lim.sessionCalls)],['今日 tokens',String(today.inputTokens||0)+' in / '+String(today.outputTokens||0)+' out'],['今日中位延迟',today.medianLatencyMs==null?'-':today.medianLatencyMs+' ms'],['全天预计',q.projection?String(q.projection.projectedDailyCalls||0)+' 次':'-']];
+el('quotacards').innerHTML=cards.map(function(x){return '<div class="card"><div class="k">'+esc(x[0])+'</div><div class="v">'+esc(x[1])+'</div></div>'}).join('');
+el('qbreak').innerHTML=pctCell('每日调用',String(used.dailyCalls||0),lim.dailyCalls,pc.dailyCalls)+pctCell('每日成本',fmtUsd(used.dailyCostUsd),lim.dailyCostUsd==null?null:fmtUsd(lim.dailyCostUsd),pc.dailyCostUsd)+pctCell('本实例调用',String(used.sessionCalls||0),lim.sessionCalls,pc.sessionCalls)+'<div class="dim qline">按工具：'+esc(Object.keys(today.byTool||{}).map(function(k){return k+' '+today.byTool[k]}).join(' · ')||'暂无')+'</div>'+'<div class="dim">按题型：'+esc(Object.keys(today.typeCounts||{}).map(function(k){return k+' '+today.typeCounts[k]}).join(' · ')||'暂无')+'</div>'+'<div class="dim qline">本实例中位 '+(sess.medianLatencyMs==null?'-':sess.medianLatencyMs+' ms')+' / p95 '+(sess.p95LatencyMs==null?'-':sess.p95LatencyMs+' ms')+' · 护栏拦截 '+(today.guards?today.guards.denied:0)+' · 建议 '+(today.guards?today.guards.advised:0)+'</div>';
+var hist=(u.history||[]);
+if(hist.length>1){var max=Math.max.apply(null,hist.map(function(h){return h.calls||0}));var span=max||1;var pts=hist.map(function(h,i){return ((i/(hist.length-1))*598).toFixed(1)+','+(84-((h.calls||0)/span)*80).toFixed(1)}).join(' ');el('qtrend').innerHTML='<polyline points="'+pts+'"></polyline>';}else{el('qtrend').innerHTML='';}
+}
 function render(d){
 var s=d.status;var st=[];
 st.push('model: '+esc(s.model)+' · '+esc(s.endpoint)+(s.keyConfigured?'':' · <span class="bad">无 API Key</span>'));
@@ -48,6 +69,7 @@ st.push('更新于 '+esc(s.updatedAt));
 el('status').innerHTML=st.join(' · ');
 var c=d.summary||{};var cards=[['调用次数',String(c.calls==null?0:c.calls)],['中位延迟',(c.medianLatencyMs==null?'-':c.medianLatencyMs+' ms')],['平均延迟',(c.avgLatencyMs==null?'-':c.avgLatencyMs+' ms')],['平均置信度',(c.avgConfidence==null?'-':Math.round(c.avgConfidence*100)+'%')],['累计 tokens',String(c.totalInputTokens==null?0:c.totalInputTokens)],['累计成本',fmtMoney(c.totalCostUs)],['护栏拦截',String(c.guardDenials==null?0:c.guardDenials)],['护栏建议',String(c.guardAdvisories==null?0:c.guardAdvisories)],['verify',String(c.verifies==null?0:c.verifies)]];
 el('cards').innerHTML=cards.map(function(x){return '<div class="card"><div class="k">'+esc(x[0])+'</div><div class="v">'+x[1]+'</div></div>'}).join('');
+renderUsage(d.usage);
 el('roll').innerHTML=(d.roll||[]).map(function(e){
 if(e.kind==='decision'){return '<tr><td class="dim">'+esc(String(e.ts||'').slice(11,19))+'</td><td>'+esc((e.stateHead||'').slice(0,60))+'</td><td>'+fmtQ(e.questions)+'</td><td>'+esc(e.latencyMs+' ms')+'</td><td>'+fmtMoney(e.costUs)+'</td></tr>';}
 if(e.kind==='verify'){return '<tr><td class="dim">'+esc(String(e.ts||'').slice(11,19))+'</td><td class="ok">'+esc(e.summaryText||'verified')+'</td><td colspan="3"></td></tr>';}

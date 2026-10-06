@@ -14,7 +14,7 @@
  * Hand-written, build-free, defensive: any failure degrades only this card.
  */
 window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
-  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.7.5";
+  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.8.0";
   "use strict";
   var module = { exports: {} };
   var react = require("react");
@@ -98,6 +98,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     ".djev-barFill{height:100%;border-radius:2px;background:var(--dsw-alias-brand-primary)}",
     ".djev-barOk{background:var(--dsw-alias-label-success)}",
     ".djev-barWarn{background:var(--dsw-alias-label-warning)}",
+    ".djev-barBad{background:var(--dsw-alias-label-error,#c62828)}",
     ".djev-ansWhy{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}",
     ".djev-chips{display:flex;gap:6px;flex-wrap:wrap;padding:2px 0 6px}",
     ".djev-chip{border-radius:10px;padding:1px 8px;font-size:11px;background:var(--dsw-alias-bg-layer-2,#0000000d);color:var(--dsw-alias-label-secondary)}",
@@ -198,6 +199,27 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
           hint: "对话内可用 jev_overview 获得同样的指标，通常无需开启。" },
         { path: "dashboard.basePath", label: "看板路径", control: "text",
           hint: "默认 /jev。启用看板后在本机浏览器打开该路径。" },
+      ],
+    },
+    {
+      heading: "使用额度",
+      fields: [
+        { path: "quota.enabled", label: "启用本机用量与额度面板", control: "toggle",
+          hint: "统计本实例真实调用/成本/时延。TypeSafe 没有余额接口，面板只报本机实测 + 本地自设额度。" },
+        { path: "quota.enforce", label: "超额硬性停止", control: "toggle",
+          hint: "开启后达到任一上限即明确报错并停止调用；默认关闭 = 仅展示，不影响判定。" },
+        { path: "quota.warnAtPercent", label: "告警阈值（%）", control: "text", numeric: true, min: 1, max: 100,
+          hint: "默认 80：占任一上限达到该比例即标黄。" },
+        { path: "quota.dailyCallLimit", label: "每日调用上限（次）", control: "text", numeric: true, min: 0, max: 1000000,
+          hint: "0 = 不设限。" },
+        { path: "quota.dailyCostLimitUsd", label: "每日成本上限（美元）", control: "text", numeric: true, min: 0, max: 10000,
+          hint: "0 = 不设限。按 $0.042/MTok 输入价估算（输出免费）。" },
+        { path: "quota.sessionCallLimit", label: "本实例调用上限（次）", control: "text", numeric: true, min: 0, max: 1000000,
+          hint: "0 = 不设限。" },
+        { path: "quota.persist", label: "保存本地历史", control: "toggle",
+          hint: "写入 $DSH_HOME/jev-usage.json；默认关闭 = 仅内存，重启即归零。" },
+        { path: "quota.historyDays", label: "历史保留天数", control: "text", numeric: true, min: 1, max: 365,
+          hint: "默认 30 天（persist 开启时生效）。" },
       ],
     },
   ];
@@ -607,6 +629,16 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
               return h("span", { key: "t" + k, className: "djev-chip" }, k + " ×" + sum.typeCounts[k]);
             }))
         : null,
+      m.usage && !m.usage.error
+        ? h("div", { className: "djev-chips" },
+            h("span", { className: "djev-chip " + (m.usage.status === "ok" ? "djev-chipOk" : "djev-chipWarn") },
+              "额度 " + (m.usage.status || "ok")),
+            h("span", { className: "djev-chip" },
+              "今日 " + (((m.usage.used || {}).dailyCalls) || 0) + " 次"
+                + (m.usage.limits && m.usage.limits.dailyCalls ? " / " + m.usage.limits.dailyCalls : "")),
+            h("span", { className: "djev-chip" }, "今日 $" + Number(((m.usage.used || {}).dailyCostUsd) || 0).toFixed(6)),
+            h("span", { className: "djev-chip" }, m.usage.enforce ? "超额即停止调用" : "仅展示（不拦截）"))
+        : null,
       recent.length ? h("p", { className: "djev-ansWhy" }, "最近调用（新→旧）") : null,
       recent.map(function (e, i) {
         return h("div", { key: "r" + i, className: "djev-recent" },
@@ -715,6 +747,88 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
         h("span", null, "结构化结果（presentationMeta）")));
   }
   /**
+   * jev_usage: what THIS instance really spent, against budgets the user set
+   * LOCALLY. TypeSafe exposes no balance endpoint (every /v1/usage-like path
+   * answers 404), so the panel must never imply it knows the provider-side
+   * balance: it reports measured usage and repeats the honest note.
+   */
+  function UsageBody(props) {
+    var m = props.meta || {};
+    var used = m.used || {};
+    var lim = m.limits || {};
+    var pc = m.percent || {};
+    var today = m.today || {};
+    var hist = m.history || [];
+    var proj = m.projection || {};
+    var st = m.status || "ok";
+    var warnAt = m.warnAtPercent == null ? 80 : m.warnAtPercent;
+    function money(v) { return "$" + (Number(v) || 0).toFixed(6); }
+    function dur(ms) {
+      if (ms == null || ms <= 0) return "—";
+      var mins = Math.round(ms / 60000);
+      if (mins < 60) return mins + " 分";
+      return Math.floor(mins / 60) + " 小时 " + (mins % 60) + " 分";
+    }
+    function limitText(n, render) { return n == null ? "未设上限" : render(n); }
+    function meter(label, text, percent) {
+      var p = percent == null ? null : percent;
+      var cls = p == null ? "djev-barOk" : p >= 100 ? "djev-barBad" : p >= warnAt ? "djev-barWarn" : "djev-barOk";
+      return h("div", { key: label, style: { padding: "2px 0" } },
+        h("div", { className: "djev-ansWhy" },
+          label + "：" + text + (p == null ? "" : "（" + Math.round(p) + "%）")),
+        h("div", { className: "djev-bar" },
+          h("div", { className: "djev-barFill " + cls,
+            style: { width: String(Math.min(100, Math.max(0, p == null ? 0 : p))) + "%" } })));
+    }
+    var spark = "";
+    if (hist.length) {
+      var max = 0;
+      for (var i = 0; i < hist.length; i++) max = Math.max(max, hist[i].calls || 0);
+      var glyphs = "▁▂▃▄▅▆▇█";
+      for (var j = 0; j < hist.length; j++) {
+        var v = hist[j].calls || 0;
+        var idx = max <= 0 ? 0 : Math.min(glyphs.length - 1, Math.round((v / max) * (glyphs.length - 1)));
+        spark += glyphs.charAt(idx);
+      }
+    }
+    var byTool = Object.keys(m.byTool || {});
+    return h("div", null,
+      h("div", { className: "djev-chips" },
+        h("span", { className: "djev-chip " + (m.enabled === false ? "djev-chipWarn" : st === "ok" ? "djev-chipOk" : "djev-chipWarn") },
+          m.enabled === false ? "额度面板未启用" : "额度状态 " + st),
+        h("span", { className: "djev-chip" }, "告警阈值 " + warnAt + "%"),
+        h("span", { className: "djev-chip" }, "至本日重置 " + dur(m.resetInMs)),
+        h("span", { className: "djev-chip " + (m.enforce ? "djev-chipWarn" : "") },
+          m.enforce ? "超额即停止调用" : "仅展示（不拦截）")),
+      h("div", { className: "djev-stats" },
+        h(Stat, { key: "dc", value: String(used.dailyCalls || 0), label: "今日调用" + (lim.dailyCalls == null ? "" : " / " + lim.dailyCalls) }),
+        h(Stat, { key: "dcc", value: money(used.dailyCostUsd), label: "今日成本" + (lim.dailyCostUsd == null ? "" : " / " + money(lim.dailyCostUsd)) }),
+        h(Stat, { key: "sc", value: String(used.sessionCalls || 0), label: "本实例调用" + (lim.sessionCalls == null ? "" : " / " + lim.sessionCalls) }),
+        h(Stat, { key: "tin", value: String(today.inputTokens || 0), label: "今日 input tokens" }),
+        h(Stat, { key: "tout", value: String(today.outputTokens || 0), label: "今日 output tokens" }),
+        h(Stat, { key: "med", value: today.medianLatencyMs == null ? "—" : today.medianLatencyMs + " ms", label: "今日中位延迟" }),
+        h(Stat, { key: "p95", value: today.p95LatencyMs == null ? "—" : today.p95LatencyMs + " ms", label: "今日 p95" }),
+        h(Stat, { key: "proj", value: proj.projectedDailyCalls == null ? "—" : String(proj.projectedDailyCalls), label: "全天预计调用" })),
+      meter("每日调用", (used.dailyCalls || 0) + " / " + limitText(lim.dailyCalls, String), lim.dailyCalls ? pc.dailyCalls : null),
+      meter("每日成本", money(used.dailyCostUsd) + " / " + limitText(lim.dailyCostUsd, money), lim.dailyCostUsd ? pc.dailyCostUsd : null),
+      meter("本实例调用", (used.sessionCalls || 0) + " / " + limitText(lim.sessionCalls, String), lim.sessionCalls ? pc.sessionCalls : null),
+      proj.hoursToDailyLimit == null ? null
+        : h("p", { className: "djev-ansWhy" },
+            "按当前节奏（约 " + (proj.callsPerHour || 0) + " 次/小时）预计 " + proj.hoursToDailyLimit + " 小时后触达每日上限。"),
+      spark ? h("p", { className: "djev-tvState" }, "近 " + hist.length + " 天每日调用：" + spark) : null,
+      byTool.length
+        ? h("div", { className: "djev-chips" },
+            h("span", { className: "djev-chip" }, "今日按工具"),
+            byTool.map(function (k) {
+              return h("span", { key: "b" + k, className: "djev-chip" }, k + " ×" + m.byTool[k]);
+            }))
+        : null,
+      m.provider && m.provider.note ? h("p", { className: "djev-ansWhy" }, m.provider.note) : null,
+      h("p", { className: "djev-tvFoot" },
+        h("span", null, m.persistence && m.persistence.enabled ? "本地历史：" + (m.persistence.file || "jev-usage.json") : "仅内存统计（重启归零）"),
+        h("span", null, "本机实测 + 本地自设额度，非供应商余额")));
+  }
+  /**
    * The inline view for one Jev tool call.
    *
    * Two ways in, one shape out:
@@ -775,11 +889,12 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     var dot = running ? " djev-tvDotRun" : isError ? " djev-tvDotErr" : " djev-tvDotOk";
     var label = running
       ? (toolName === "jev_choose" ? "Jev 方案选型中…" : toolName === "jev_verify" ? "Jev 实测中…" : toolName === "jev_overview" ? "读取 Jev 总览…"
-        : toolName === "jev_guard_status" ? "读取护栏状态…" : "Jev 判定中…")
+        : toolName === "jev_guard_status" ? "读取护栏状态…" : toolName === "jev_usage" ? "读取 Jev 额度…" : "Jev 判定中…")
       : isError ? "Jev 调用失败"
       : kind === "overview" ? "Jev 调用总览"
       : kind === "guard" ? "Jev 护栏状态"
       : kind === "verify" ? "Jev 实测验证"
+      : kind === "usage" ? "Jev 使用额度"
       : kind === "choose" ? "Jev 方案选型"
       : "Jev 判定完成";
 
@@ -814,6 +929,12 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       if (view.denyThreshold != null) chips.push("阈值 " + view.denyThreshold);
     } else if (kind === "verify") {
       chips.push(view.verified === true ? "实测准确率 " + (view.accuracy == null ? "—" : pct(view.accuracy) + "%") : "未运行");
+    } else if (kind === "usage") {
+      var uUsed = view.used || {};
+      chips.push("额度 " + (view.enabled === false ? "未启用" : view.status || "ok"));
+      chips.push("今日 " + (uUsed.dailyCalls || 0) + " 次");
+      chips.push("$" + Number(uUsed.dailyCostUsd || 0).toFixed(6));
+      if (view.enforce) chips.push("超额即停止");
     }
 
     return h("div", { className: "djev-tv", "data-dsh-jev-toolview": "1", "data-dsh-jev-kind": kind },
@@ -873,6 +994,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
         !running && !isError && kind === "overview" ? h(OverviewBody, { meta: view }) : null,
         !running && !isError && kind === "guard" ? h(GuardBody, { meta: view }) : null,
         !running && !isError && kind === "verify" ? h(VerifyBody, { meta: view }) : null,
+        !running && !isError && kind === "usage" ? h(UsageBody, { meta: view }) : null,
         !running && !isError && kind === "decision" ? h(DecisionBody, { answers: answers }) : null,
         !running && !isError && kind === "choose" ? h(ChooseBody, { meta: view }) : null,
 
@@ -929,7 +1051,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
    */
   function registerToolViews(ctx) {
     ctx.slots.inject("tool.call.toolview", function* () {
-      var names = ["jev_decision", "jev_choose", "jev_overview", "jev_guard_status", "jev_verify"];
+      var names = ["jev_decision", "jev_choose", "jev_overview", "jev_guard_status", "jev_verify", "jev_usage"];
       for (var i = 0; i < names.length; i++) {
         yield ctx.slots.register(
           {

@@ -272,6 +272,17 @@
 - 护栏自证：本轮三路审计的聚合文本在调试期被 0.7.4 旧规则拦下 3 次（2 次确定性、1 次 Jev 判定 81–85%，阈值 0.8）——正是硬规则要改为位置感知的直接证据；0.7.5 起这些描述性文本（引用规则样例词）不再命中硬层。
 - 启动日志：`settings namespace registered: jev-verify | schema: present | scope: object` 与 `system prompt: guidance registered | section tool:jev | order 3000 | chars 838`。
 
+### 2026-10-05（v0.8.0：使用额度面板）
+
+- 需求来源：用户要求「添加一个 Jev 使用额度面板，丰富功能，可以参考市面上已经成熟的额度面板、相关 dsh 额度插件」。
+- 市场勘察：对比了 12 个同类 DSH 额度/用量插件条目（wenzetan__dsh-quota-panel、Minokun__dsh-quota、jiangli07__dsh-deepseek-quota-bar、dk33333333__dsh-deepseek-quota-left、black970__dsh-quota-viewer、xinghe-1018__dsh-token-plan-quota、Cassius0924__dsh-usage-dashboard、1HelloMan1__dsh-usage-dashboard-plus、kirigayakazima__dsh-usage-vendor-stats、kenz1117__dsh-ui-usage-billing、licyer__dsh-token-monitor、YZz-S__dsh-billing-balance）。归纳出的成熟要素：多入口（侧栏/头部/输入框/悬浮胶囊/设置页）、滚动窗口与重置倒计时、彩色进度条与告警阈值、本地历史与趋势图、CSV 导出，以及最重要的一条——**官方真值与「只报本实例实测」明确分层**（xinghe-1018 的做法）。
+- 供应商接口真相（2026-10-05 实测）：`POST /v1/systemone` 缺 `model` 字段直接 422（`missing: [body, model]`），带上即 200 且响应头含 `x-typesafe-request-id`；`GET /v1/models` 返回 `jev-latest` 与 `jev-preview`（均为 2026-09-10）；而 `GET /v1/usage`、`/v1/quota`、`/v1/account`、`/v1/me`、`/v1/balance`、`/v1/credits`、`/v1/limits`、`/v1/billing`、`/v1/subscription`、`/v1/plan`、`/v1/user`、`/v1/health`、`/v1/` 全部 **404**。结论：TypeSafe 不提供余额/额度接口，面板只能报**本机实测用量 + 本地自设额度**；这条边界印在工具描述、文本结果、卡片与文档四处。
+- 实现：新增 `lib/usage.js`（`createUsageModule({ inputPriceUsdPerMTok = 0.042 })`；内存 ring 400 条、每日本聚合最多 120 样本、可选持久化 `$DSH_HOME/jev-usage.json`（临时文件 + rename，失败放行）；窗口 today/d7/d30/all/session；`snapshot()` 产出 quota / limits / used / remaining / percent / status / projection / resetAt / history / provider 边界说明；`checkBudget()` 只在 `quota.enabled && quota.enforce` 时拦截）。记账接入 `jev_decision`、`jev_choose`、`jev_verify`（补记 `calls = questionCount`、input/output tokens、costUs）与护栏事件（护栏不占调用数，只累计 denied/advised）。新增工具 `jev_usage`（只读本地快照、不发 API，`window` 参数 5 档），`jev_overview` 与系统提示引导同步提及。
+- 界面：对话内新增 `usage` 视图（UsageBody：额度状态/阈值/重置倒计时 chips、8 个统计格、三条预算进度条、每日走势 sparkline、按工具分布、底部边界说明）；`jev_overview` 概览卡新增额度 chip 行；独立看板（`dashboard.enabled`）新增额度区（`.bar` 进度条 + 30 天趋势 SVG）；设置卡新增第五组「使用额度」（enabled / enforce / warnAtPercent / dailyCallLimit / dailyCostLimitUsd / sessionCallLimit / persist / historyDays）。
+- 成本口径交叉核对（用真实实测数据验证常量）：0.7.5 实测 8,696 input tokens，按 `$0.042 / 1e6` 得 **$0.000365232**（≈$0.000365），与 0.7.5 报告一致；面板记录的成本按同一常量从实测 tokens 推导，不做估值猜测。
+- 验证：`npm test` **28/28 全绿**（2,538 ms）。新增 `test/usage.test.mjs` 8 组断言（空态与诚实说明、单次判定成本 = tokens×常量、27 题批量记 27 次调用且护栏事件不计数、额度状态与三种硬停、持久化与按 historyDays 跨天裁剪、重建实例重载同一文件、reset 清空、全部格式化函数与两种负载形态）；`test/toolview.test.mjs` 新增 `usage` 视图渲染用例；`test/boot.test.mjs` 与 `test/compat.test.mjs` 断言六个工具（含 `jev_usage`）与新的 volatile quota 字段。
+- 踩坑（0.7.5 审计的延续）：schemastery 的 `.step(n)` 是**以 min 为偏移**的等差数列，`z.number().step(5).min(1)` 只接受 1,6,11,…，导致合法的 80 被拒（`$.quota.warnAtPercent expected number multiple of 5 but got 80`）；改为 `.step(5).min(0)` 后通过。另外，本轮写代码时**再次被运行中的 0.7.4 旧护栏拦下 3 次**（写入内容里出现危险命令字面量）——与 0.7.5 记录一致，也是 0.7.5 位置感知重构必要性的又一次复现。
+
 ## 与 dsh-jev/官方博客声明的边界
 
 - 200x 提速、1/400 成本等对比数字依赖具体基线模型与工作负载，本插件不搬运这些相对值，只发布可直接核验的绝对值（延迟、成本、准确率、校准）。

@@ -53,7 +53,7 @@ function fakeCtx({ settings = "none", config } = {}) {
 // --- 1) The GUI form prerequisite: user-facing fields must be volatile.
 assert.ok(Config, "Config schema present");
 const volatile = volatilePaths(Config);
-for (const field of ["enabled", "apiKey", "apiKeyEnv", "baseURL", "model", "timeoutMs", "maxQuestionsPerCall", "verifyEnabled", "autoGuard.enabled", "autoGuard.denyThreshold", "autoGuard.statusTool", "dashboard.enabled", "guidance.enabled", "guidance.order", "guidance.extra"]) {
+for (const field of ["enabled", "apiKey", "apiKeyEnv", "baseURL", "model", "timeoutMs", "maxQuestionsPerCall", "verifyEnabled", "autoGuard.enabled", "autoGuard.denyThreshold", "autoGuard.statusTool", "dashboard.enabled", "quota.enabled", "quota.enforce", "quota.warnAtPercent", "quota.dailyCallLimit", "quota.dailyCostLimitUsd", "quota.sessionCallLimit", "quota.persist", "quota.historyDays", "guidance.enabled", "guidance.order", "guidance.extra"]) {
   assert.ok(volatile.includes(field), "field " + field + " must be volatile so dsh >= 0.1.7 renders it in the entry form");
 }
 console.log("PASS 1: " + volatile.length + " config fields are volatile (entry-form editable)");
@@ -62,7 +62,7 @@ console.log("PASS 1: " + volatile.length + " config fields are volatile (entry-f
 {
   const { ctx, tools } = fakeCtx({ settings: "modern" });
   assert.doesNotThrow(() => apply(ctx, {}), "apply must not throw when settings.register is absent");
-  assert.deepEqual(tools.map((t) => t.name).sort(), ["jev_choose", "jev_decision", "jev_guard_status", "jev_overview", "jev_verify"], "all five tools register on dsh >= 0.1.7");
+  assert.deepEqual(tools.map((t) => t.name).sort(), ["jev_choose", "jev_decision", "jev_guard_status", "jev_overview", "jev_usage", "jev_verify"], "all six tools register on dsh >= 0.1.7");
   console.log("PASS 2: dsh >= 0.1.7 (no register) registers every tool without throwing");
 }
 
@@ -70,7 +70,7 @@ console.log("PASS 1: " + volatile.length + " config fields are volatile (entry-f
 {
   const { ctx, tools } = fakeCtx({ settings: "none" });
   assert.doesNotThrow(() => apply(ctx, {}), "apply must not throw without a settings service");
-  assert.equal(tools.length, 5, "tools register without any settings service");
+  assert.equal(tools.length, 6, "tools register without any settings service");
   console.log("PASS 3: host without a settings service still gets every tool");
 }
 

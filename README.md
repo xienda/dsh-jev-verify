@@ -6,7 +6,8 @@ Jev — TypeSafe AI's **System One** decision model — as a first-class plugin 
 Jev does not generate text. Given a `state` plus typed questions it returns
 **typed answers with calibrated probabilities** in one parallel API call
 (~70–500 ms published; in our runs median 266–484 ms and p95 825–1468 ms; single-run maxima reach ~1.5 s and ~5 s under a loaded network). This plugin exposes that as agent tools, adds an
-opt-in **auto-guard** (risk + loop checks), and makes sure the claims are
+opt-in **auto-guard** (risk + loop checks), an honest local
+**usage/quota panel**, and makes sure the claims are
 *verified, not trusted blindly*:
 
 | Tool | What it does | Call it when |
@@ -16,6 +17,7 @@ opt-in **auto-guard** (risk + loop checks), and makes sure the claims are
 | `jev_verify` | Runs the frozen 27-question labeled benchmark (urgency, spam, toxicity, personal data, routing, intent, search type, priority, severity, satisfaction, guard verdicts) against the **live** API at concurrency 6 (measured 4.96 s wall for all 27 calls in 0.7.5 and 3.999 s on a re-run, versus 10.1 s serial): accuracy overall and on the high-confidence subset, median/p95/min/max latency, calibration, tokens, cost, and every mislabeled case (total plus the high-confidence ones). | Endpoint health check, model-version comparison, or a regression check — never routinely: one run is 27 real API calls (~8.7K input tokens, ≈$0.0004). |
 | `jev_guard_status` | Read-only audit of the auto-guard: deterministic rules and the Jev backstop counted separately (`checks` / `jevCalls` / `denied` / `deterministicDenied` / `auditCalls`), guarded tool names, `denyThreshold`, loop-check counts, remaining session budget. | Confirm the guard is armed, see how often it actually fired, or explain why a command was blocked. When the guard is off it says so instead of reporting zeros. |
 | `jev_overview` | Read-only snapshot of this session's Jev ledger: recent decisions and choices with confidence, latency median & p95, question-type mix, guard events, cumulative tokens and cost, plus key/guard/threshold status. | The user asks what Jev has done, blocked or spent — or you need endpoint and budget state without restarting the session. The ledger starts at plugin-instance lifetime; guard counts live in `jev_guard_status`. |
+| `jev_usage` | Locally measured Jev usage and (optional) local budgets: rolling windows (today / 7 d / 30 d / all / session), calls, input/output tokens, estimated cost, latency median & p95, question-type and per-tool mix, a projected daily burn rate, and — with `quota.enabled` + `quota.enforce` — a hard stop before the API call. | The user asks how much Jev has been used or what it cost, or you want to check a budget before a batch of judgments. Reads only local state — no API call. TypeSafe has no balance endpoint, so this is measured local usage, not provider credit. |
 
 **Auto-guard mode** (opt-in `autoGuard.enabled`): before shell-like tool calls
 (`bash`/`pwsh`/`run_code`/`terminal`), a free deterministic layer runs first.
@@ -37,6 +39,40 @@ ledger and auditable via `jev_guard_status`.
 - every `jev_decision` result includes the model, latency and token usage, so each call is auditable;
 - `jev_verify` refuses to report numbers it did not measure;
 - the benchmark CLI (`bench/bench.mjs`) is dependency-free and reproducible with any key.
+
+## What's new in 0.8.0
+
+The usage/quota panel: Jev usage is now measured, stored and surfaced — as a
+tool view, in the overview card, and on the standalone board.
+
+- **`jev_usage` — a usage/quota panel you can call.** Every decision, choice,
+  verification and guard event is recorded locally with its measured input
+  tokens, cost, latency, question-type mix and tool name. The tool returns
+  rolling windows (today / 7 days / 30 days / all / session), a daily call and
+  cost series, a projected daily burn rate ("at this pace the daily limit is
+  reached in N h"), and an optional hard stop.
+- **Local budgets, not invented provider balances.** TypeSafe publishes no
+  balance or quota endpoint (`GET /v1/usage`, `/v1/quota`, `/v1/account`,
+  `/v1/balance`, `/v1/credits`, `/v1/limits`, `/v1/billing` … all 404; only
+  `/v1/models` answers). So the panel reports only what this machine actually
+  measured, against limits you set yourself: `quota.dailyCallLimit`,
+  `quota.dailyCostLimitUsd`, `quota.sessionCallLimit`, plus `warnAtPercent`.
+  The boundary is printed in both the text result and the card — never a
+  fabricated balance.
+- **Optional hard stop (`quota.enforce`).** With `enabled` + `enforce`, a call
+  that would cross a configured limit is refused *before* the API request, with
+  a message naming the budget. Display-only by default.
+- **Persistence is opt-in.** In-memory by default (400 samples); set
+  `quota.persist: true` to keep up to `quota.historyDays` (default 30) of daily
+  history in `$DSH_HOME/jev-usage.json` (atomic tmp+rename, fail-open).
+- **Surfaced everywhere.** `jev_overview` gained a usage block, the standalone
+  board (`dashboard.enabled`) gained a quota section with bars, projections and
+  a 30-day sparkline, the settings card gained a "usage/quota" group, and
+  `jev_verify` now records its 27 calls, tokens and cost instead of only the
+  accuracy string.
+- **Tests: 28 passing** — the new `test/usage.test.mjs` covers the empty state,
+  token accounting, batch calls, quota status and the hard stop, persistence
+  across a day boundary, reload, reset and every formatter.
 
 ## What's new in 0.7.5
 
@@ -157,14 +193,16 @@ a batch of correctness and honesty bugs, all fixed and pinned by tests — and
   now covers every option: credentials (key, credential-ref, base URL, model,
   timeout, question cap), tool toggles, the whole auto-guard block (safety/loop
   switches, guarded tool list, deny threshold, Jev budget, loop tuning) and the
-  dashboard (enable + base path) — with numeric validation and dirty-state
-  handling.
+  dashboard (enable + base path) and the usage/quota panel (enable, enforce,
+  warn threshold, daily call / daily cost / session limits, persistence,
+  history days) — with numeric validation and dirty-state handling.
 - **Config handling hardened.** Volatile config fields (schemastery
   `.volatile()`) are unwrapped before use, so an object-shaped `apiKeyEnv` no
   longer crashes `credentialRef(...)`, `autoGuard.enabled` / `dashboard.enabled`
   actually take effect, and numeric options are read as numbers.
-- **Tests: 27 passing** (`npm test`) covering boot, client render, tool views,
-  settings, dashboard, guard and the presentation projections.
+- **Tests: 28 passing** (`npm test`) covering boot, client render, tool views,
+  settings, dashboard, guard, usage/quota accounting and the presentation
+  projections.
 
 ## Why Jev
 
@@ -306,12 +344,22 @@ structured cards rather than raw JSON:
   and the mislabelled cases.
 - `jev_guard_status` — guard cards: guarded tools, deny threshold, session
   budget, safety & loop counters and the last guarded tool.
+- `jev_usage` — the usage/quota panel: quota status, today's calls and cost,
+  three budget meters, a projected daily burn rate, a per-day sparkline over the
+  retained history and the per-tool breakdown, with the honest boundary printed
+  at the bottom.
 
 The session ledger behind `jev_overview` always records (in memory, bounded at
 300 events) — since 0.7.5 it no longer waits for the standalone page. That page
 still exists for deployments that want it: set `dashboard.enabled: true` and open
 http://127.0.0.1:3080/jev; only then are events also appended to
 `$DSH_HOME/jev-roll.jsonl` for external tooling.
+
+The same ledger feeds the **usage/quota panel** (`jev_usage`, the usage block in
+`jev_overview`, and the board's quota section). It measures this machine only:
+TypeSafe exposes no balance endpoint, so the panel never claims a provider-side
+balance — only measured calls, tokens and cost against the local budgets you
+configure.
 
 ## Verification (measured, dated)
 
@@ -342,12 +390,16 @@ or ask the agent: *“run jev_verify”*.
 **0.7.5**: the audit batch (server, client, packaging) — see the 0.7.5 section above and
 `docs/verification.md`; `npm test` is 27/27.
 
+**0.8.0**: the usage/quota panel — locally measured usage with rolling windows,
+projections and optional hard budgets; `npm test` is 28/28. See the 0.8.0 section
+above. `docs/verification.md` records the measured accounting.
+
 **Regression (2026-09-28, v0.7.0)**: in a headless profile with
 `autoGuard.enabled: true`, `jev_guard_status` reports the armed guard (tools
 list, `deny threshold 0.8`, budget) and `jev_overview` returns its board without
 the former `credentialRef` crash — the volatile-config unwrapping fix. `npm test`
 the former `credentialRef` crash — the volatile-config unwrapping fix. `npm test`
-passed 19/19 at that time (27/27 today).
+passed 19/19 at that time (28/28 today).
 
 ## Configuration
 
@@ -376,6 +428,14 @@ passed 19/19 at that time (27/27 today).
 | `autoGuard.determinismFirst` | true | run the free deterministic check before Jev |
 | `dashboard.enabled` | false | serve the optional standalone board page |
 | `dashboard.basePath` | `/jev` | path of that board page |
+| `quota.enabled` | true | register `jev_usage` and record usage |
+| `quota.enforce` | false | hard-stop calls that would cross a local budget |
+| `quota.warnAtPercent` | 80 | usage percentage that flips the panel to *warn* |
+| `quota.dailyCallLimit` | 0 | local daily call budget (0 = no limit) |
+| `quota.dailyCostLimitUsd` | 0 | local daily cost budget in USD (0 = no limit) |
+| `quota.sessionCallLimit` | 0 | local per-session call budget (0 = no limit) |
+| `quota.persist` | false | keep daily history in `$DSH_HOME/jev-usage.json` |
+| `quota.historyDays` | 30 | days of daily history retained (1–365) |
 
 ## Related projects
 

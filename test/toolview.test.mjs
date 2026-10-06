@@ -204,4 +204,36 @@ assert.ok(chooseView.includes("风险") && chooseView.includes("24%"), "risk col
 assert.ok(chooseView.includes("综合") && chooseView.includes("51%"), "composite column header and value shown");
 assert.ok(chooseView.includes("置信") && chooseView.includes("45%"), "confidence column header and value shown");
 
-console.log("PASS: toolview renders running / settled / error states — and every presentationMeta kind (decision/overview/guard/verify/choose) with real data");
+// ---- jev_usage kind --------------------------------------------------------
+const usageEntry = entries.find((e) => e.opts.key === "jev_usage");
+assert.ok(usageEntry, "jev_usage toolview registered");
+const usageView = renderToStaticMarkup(React.createElement(usageEntry.Comp, {
+  toolName: "jev_usage", __forceOpen: true,
+  block: {
+    kind: "tool-result", callId: "c7", call: { name: "jev_usage", argsRaw: "{}" },
+    content: [{ type: "text", text: "Jev 使用额度面板（本机实测 + 本地自设额度，非供应商余额）" }], isError: false, subCalls: [],
+    meta: {
+      kind: "usage", status: "warn", warnAtPercent: 80, resetInMs: 3600000, enforce: true, enabled: true,
+      limits: { dailyCalls: 200, dailyCostUsd: 0.5, sessionCalls: 100 },
+      used: { dailyCalls: 168, dailyCostUsd: 0.007042, sessionCalls: 43 },
+      percent: { dailyCalls: 84, dailyCostUsd: 1.4, sessionCalls: 43 },
+      projection: { callsPerHour: 12.5, projectedDailyCalls: 300, hoursToDailyLimit: 2.56, hitsDailyLimitAt: "2026-09-22T12:00:00.000Z" },
+      today: { calls: 168, inputTokens: 168000, outputTokens: 600, medianLatencyMs: 285, p95LatencyMs: 1468, byTool: { jev_decision: 168 } },
+      session: { calls: 43 },
+      history: [{ day: "2026-09-20", calls: 12 }, { day: "2026-09-21", calls: 40 }, { day: "2026-09-22", calls: 168 }],
+      byTool: { jev_decision: 168, jev_verify: 0 },
+      persistence: { enabled: true, file: "C:/Users/x/.dsh/jev-usage.json" },
+      provider: { balanceApiAvailable: false, note: "TypeSafe 未提供余额/额度接口，本面板只报本机实测用量与本地自设额度；这不是供应商侧余额。" },
+      priceUsdPerMTok: 0.042,
+    },
+  },
+}));
+assert.ok(/Jev 使用额度/.test(usageView), "usage title");
+assert.ok(/额度状态 warn/.test(usageView), "quota status chip");
+assert.ok(usageView.includes("168") && usageView.includes("84%"), "measured calls and percent rendered");
+assert.ok(/超额即停止调用/.test(usageView), "enforce state rendered");
+assert.ok(/供应商余额/.test(usageView), "honesty note kept");
+assert.ok(/近 3 天每日调用/.test(usageView), "history sparkline rendered");
+assert.ok(usageView.includes("jev_decision ×168"), "per-tool breakdown rendered");
+
+console.log("PASS: toolview renders running / settled / error states — and every presentationMeta kind (decision/overview/guard/verify/choose/usage) with real data");
