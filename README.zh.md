@@ -23,6 +23,12 @@ Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 A
 - `jev_verify` 拒绝报告任何未经实测的数字；
 - 独立的基准 CLI（`bench/bench.mjs`）零依赖，任何人可用任意 Key 复现发布的数据。
 
+## 0.8.6 更新
+
+- **修掉一个会让宿主起不来的依赖问题**（issue #1）：`@deepseek-ai/dsh-tools` 曾被写成普通 `dependencies`；在 `nodeLinker: hoisted` + `hoistPattern: ["*"]` 的 profile 里，pnpm 会把一份真实副本平铺到 profile 的 `node_modules/@deepseek-ai/`，dsh 的 `tools` 条目于是加载这份副本、因缺少 peer 而 import 失败，最终报 `1 required plugin did not activate`。现在它改为 **optional peer**（`^0.1.5-rc.2`）——永不被安装，也就不可能遮蔽宿主；`dependencies` 里只剩 leaf 库 `@deepseek-ai/schemastery`。
+- 新增回归闸门 `test/manifest.test.mjs`：任何宿主运行包一旦回到 `dependencies` 测试立即失败（用「把 bug 装回去」的方式验证过它真的会红）。全量 **38/38**。
+- 功能与 0.8.5 完全一致。
+
 ## 0.8.5 更新
 
 「剩余」终于有了诚实的来源：你自报的余额，减去本机实测花费——而不是编造出来的数字。

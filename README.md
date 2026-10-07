@@ -41,6 +41,12 @@ ledger and auditable via `jev_guard_status`.
 - `jev_verify` refuses to report numbers it did not measure;
 - the benchmark CLI (`bench/bench.mjs`) is dependency-free and reproducible with any key.
 
+## What's new in 0.8.6
+
+- **Fixed a dependency mistake that could stop the host from starting** ([issue #1](https://github.com/xienda/dsh-jev-verify/issues/1)): `@deepseek-ai/dsh-tools` was declared as a normal dependency. In a profile using `nodeLinker: hoisted` + `hoistPattern: ["*"]`, pnpm materialised a real copy under the profile's `node_modules/@deepseek-ai/`; the `tools` loader entry resolved to that copy instead of the host's own, it failed to import its peers, and startup ended in `1 required plugin did not activate`. It is now an **optional peer** (`^0.1.5-rc.2`) — never installed, so it can never shadow the host. `dependencies` now carries only the leaf library `@deepseek-ai/schemastery`.
+- New guard test `test/manifest.test.mjs` fails if any host runtime package reappears in `dependencies` (verified by reintroducing the bug and watching it fail). Suite: **38/38**.
+- Otherwise identical to 0.8.5.
+
 ## What's new in 0.8.5
 
 "Remaining" finally has an honest source — the balance you declare, minus locally measured spend — instead of a number something made up.

@@ -1,7 +1,7 @@
 {
   "name": "dsh-jev-verify",
-  "version": "0.8.5",
-  "description": "Jev (TypeSafe System One decision model) for DeepSeek Harness — seven tools: jev_decision (up to 25 typed questions in one parallel call, measured median 266-484 ms), jev_choose (rank 2-10 approaches), jev_batch (one set of up to 5 judgments over 1-20 texts, one real call per text, paste-ready sortable table, built-in sentiment/priority/intent/pii/spam presets), jev_usage (local usage panel: measured calls, tokens, cost, rolling windows and an optional hard budget stop), jev_overview (session ledger), jev_guard_status (auto-guard audit), jev_verify (frozen 27-question live benchmark run 6-way parallel, 4.96 s wall, 96.3% measured). Plus an automatic tool-call guard (10 deterministic rules in two tiers - 7 hard-block, 3 Jev-judged - plus a Jev risk/loop backstop) whose own Jev verdicts are now metered into the usage ledger, an agent/pre-step auto-triage router (0.8.4) that judges each turn's first step and injects plugin-sourced advice so the harness actually calls Jev, system-prompt guidance with mandatory-trigger rules, a GUI settings card, and a money-first composer usage pill that stays silent about quota status and reset countdowns unless a local budget really exists. The /jev mount always answers - a live status page while dashboard.enabled is off. TypeSafe exposes no balance endpoint, so the panel reports only locally measured usage against locally configured budgets - never a fabricated provider balance. 0.8.5: the local ledger persists to $DSH_HOME/jev-usage.json by default so the cumulative total survives a restart, the popover derives remaining as your declared balance (quota.declaredBalanceUsd) minus locally measured spend for that period, the pill asks for that declaration instead of inventing one, and it re-reads the route every 20 s instead of every 60 s. 0.8.5 also adds jev_batch, the batch judge-and-organize tool: 1-20 texts get the same 1-5 judgments in one call, one real API call per text with bounded concurrency, and the result is a paste-ready sortable table where a failed row is reported as failed. Honest by design: no API key means an explicit error, never fabricated results; every registration is quarantined so a failure degrades one feature, never the profile.",
+  "version": "0.8.6",
+  "description": "Jev (TypeSafe System One decision model) for DeepSeek Harness — seven tools: jev_decision (up to 25 typed questions in one parallel call, measured median 266-484 ms), jev_choose (rank 2-10 approaches), jev_batch (one set of up to 5 judgments over 1-20 texts, one real call per text, paste-ready sortable table, built-in sentiment/priority/intent/pii/spam presets), jev_usage (local usage panel: measured calls, tokens, cost, rolling windows and an optional hard budget stop), jev_overview (session ledger), jev_guard_status (auto-guard audit), jev_verify (frozen 27-question live benchmark run 6-way parallel, 4.96 s wall, 96.3% measured). Plus an automatic tool-call guard (10 deterministic rules in two tiers - 7 hard-block, 3 Jev-judged - plus a Jev risk/loop backstop) whose own Jev verdicts are now metered into the usage ledger, an agent/pre-step auto-triage router (0.8.4) that judges each turn's first step and injects plugin-sourced advice so the harness actually calls Jev, system-prompt guidance with mandatory-trigger rules, a GUI settings card, and a money-first composer usage pill that stays silent about quota status and reset countdowns unless a local budget really exists. The /jev mount always answers - a live status page while dashboard.enabled is off. TypeSafe exposes no balance endpoint, so the panel reports only locally measured usage against locally configured budgets - never a fabricated provider balance. 0.8.6: @deepseek-ai/dsh-tools is an optional peer and never an installed dependency, so a hoisted copy can no longer shadow the host runtime and stall startup. 0.8.5: the local ledger persists to $DSH_HOME/jev-usage.json by default so the cumulative total survives a restart, the popover derives remaining as your declared balance (quota.declaredBalanceUsd) minus locally measured spend for that period, the pill asks for that declaration instead of inventing one, and it re-reads the route every 20 s instead of every 60 s. 0.8.5 also adds jev_batch, the batch judge-and-organize tool: 1-20 texts get the same 1-5 judgments in one call, one real API call per text with bounded concurrency, and the result is a paste-ready sortable table where a failed row is reported as failed. Honest by design: no API key means an explicit error, never fabricated results; every registration is quarantined so a failure degrades one feature, never the profile.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -63,7 +63,8 @@
     "@deepseek-ai/dsh-client-locale": "*",
     "@deepseek-ai/dsh-client-ui-conversation": "*",
     "@deepseek-ai/dsh-client-ui-settings": "*",
-    "@deepseek-ai/dsh-credentials": "*"
+    "@deepseek-ai/dsh-credentials": "*",
+    "@deepseek-ai/dsh-tools": "^0.1.5-rc.2"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -83,6 +84,9 @@
     },
     "@deepseek-ai/dsh-credentials": {
       "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
     }
   },
   "scripts": {
@@ -96,7 +100,6 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-tools": "0.1.5-rc.2",
     "@deepseek-ai/schemastery": "^3.18.4"
   },
   "dsh": {
