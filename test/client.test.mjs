@@ -267,7 +267,7 @@ console.log("PASS 5: apply is defensive on hostile hosts");
   assert.equal(pillFromRaw(null), null);
   assert.equal(pillFromRaw("nope"), null);
 
-  assert.equal(pillLabel(pill), "Jev · 今日 29 次 · $0.000534");
+  assert.equal(pillLabel(pill), "Jev · 今日 $0.000534 · 29 次");
   assert.equal(pillLabel(null), "Jev · 额度不可用");
   assert.equal(pillLabel({ ok: false }), "Jev · 额度不可用");
   assert.equal(pillLabel({ ok: true, enabled: false }), "Jev · 额度已关闭");
@@ -281,11 +281,27 @@ console.log("PASS 5: apply is defensive on hostile hosts");
   const bodyText = textOf(body).join(" | ");
   assert.match(bodyText, /Jev 本机用量 · 额度正常/);
   assert.match(bodyText, /今日调用/);
-  assert.match(bodyText, /29 \/ 200 次/);
+  assert.match(bodyText, /29 \/ 200/);
   assert.match(bodyText, /\$0\.000534/);
   assert.match(bodyText, /中位 933 ms/);
   assert.match(bodyText, /护栏拦截/);
   assert.match(bodyText, /本机实测，非账户余额/);
+  assert.match(bodyText, /本地预算重置/);
+  assert.match(bodyText, /今日成本/);
+  assert.match(bodyText, /累计（本插件实例）/);
+  // 0.8.4: without a local budget there is no "额度正常", no meter and no reset.
+  const noBudget = pillFromRaw(Object.assign({}, snapshot, {
+    quota: Object.assign({}, snapshot.quota, { limits: { dailyCalls: null, dailyCostUsd: null, sessionCalls: null }, percent: {}, budgetConfigured: false }),
+    windows: Object.assign({}, snapshot.windows, { all: { calls: 29, costUs: 0.000534 } }),
+  }));
+  assert.equal(noBudget.budgetConfigured, false);
+  const flat = textOf(render(PillBody({ pill: noBudget, at: 0, busy: false, onRefresh: () => {} }))).join(" | ");
+  assert.doesNotMatch(flat, /额度正常/);
+  assert.doesNotMatch(flat, /额度重置/);
+  assert.doesNotMatch(flat, /本地自设上限/);
+  assert.match(flat, /按量计费/);
+  assert.match(flat, /今日成本/);
+  assert.match(flat, /累计（本插件实例）/);
   const broken = render(PillBody({ pill: { ok: false, error: "HTTP 404" } }));
   assert.match(textOf(broken).join(" | "), /HTTP 404/);
 

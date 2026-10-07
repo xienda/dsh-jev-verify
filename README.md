@@ -40,6 +40,44 @@ ledger and auditable via `jev_guard_status`.
 - `jev_verify` refuses to report numbers it did not measure;
 - the benchmark CLI (`bench/bench.mjs`) is dependency-free and reproducible with any key.
 
+## What's new in 0.8.4
+
+The panel stops implying a quota that does not exist, the guard's own Jev calls
+finally reach the ledger, and the plugin now participates on its own.
+
+- **No fabricated quota.** TypeSafe is a metered API with no balance endpoint. With
+  no local budget configured, the pill and the status page no longer print a
+  "额度正常" verdict, no longer draw percentage bars against "∞", and no longer
+  show "额度重置 13 小时 41 分后" — a countdown to a budget that was never set. Without
+  a budget the panel states one thing: pay-as-you-go, nothing resets, only locally
+  measured usage is reported. A "本地预算重置" countdown appears only when a local
+  limit really exists, and it is labelled local.
+- **Money first.** The collapsed pill reads `Jev · 今日 $0.000534 · 29 次`, and the
+  popover leads with today's cost and cumulative cost; call counts are secondary
+  rows. Cost is what a pay-as-you-go user actually pays.
+- **The guard's Jev calls are metered.** `judgeRisky`/`judgeStall` used to answer the
+  guard and vanish: a session could report `safety.jevCalls: 2` in
+  `jev_guard_status` while the usage ledger still read "今日调用 0 次". Both verdicts
+  now report latency and token usage through an `onJevCall` event and are recorded
+  as `kind: "judge"` ledger entries (`tool: "auto-guard"`).
+- **Auto-triage (`autoTriage`, on by default).** On the first step of every turn one
+  small Jev call (4 routing questions, ~1.5K input tokens, bounded by
+  `autoTriage.timeoutMs`) classifies the request — intent, whether an atomic
+  judgment is really needed, which kind, and which Jev tool serves it — and the
+  advice is injected back as a plugin-sourced user message. It runs at most once
+  per (agent, turn), never blocks a step, and fails open on an unknown host shape,
+  a missing key, a timeout or any API error. Being metered, it is visible in the
+  panel, so a working plugin no longer shows zero calls.
+- **Harder guidance.** The system-prompt section now carries mandatory-trigger
+  rules (classification/routing, priority/severity/satisfaction scoring, truth and
+  compliance checks, structured extraction, choosing among 2-10 options), forbids
+  bypassing Jev "because I already know the answer", and states the real cost
+  magnitude (~$0.00002-0.0001 per call; 25 questions cost the same as 1).
+- Tests: new `test/triage.test.mjs` plus extended assertions in
+  `test/usage.test.mjs`, `test/client.test.mjs` and `test/guard.test.mjs`;
+  `npm test` is 30/30. The client half takes effect on a page refresh; the server
+  half (guard metering, auto-triage, guidance, status page) needs a host restart.
+
 ## What's new in 0.8.3
 
 Settings you save now actually take effect.
@@ -375,11 +413,12 @@ Returns per-question `answers` (choice/score/noul + confidence + probabilities),
 
 ## How the harness decides to call Jev
 
-There are three ways a Jev call happens, and 0.7.4 is the release that made the first one reliable:
+There are four ways a Jev call happens; 0.7.4 made the first one reliable, and 0.8.4 added the fourth:
 
 1. **System-prompt guidance (proactive).** The plugin registers a prompt section named `tool:jev` (order `3000`, override with `guidance.order`, disable with `guidance.enabled: false`, extend with `guidance.extra`). It states the per-tool trigger rules in priority order — *if the decision falls into one of these classes, call this tool now* — and is register-only-when-`jev_decision`-exists, so it never advertises tools that are not loaded. This is the mechanism that makes the agent reach for Jev **by itself**; without it a model only ever sees the tool list and rarely spends a call on it.
 2. **Tool descriptions (discovery).** Each tool description carries the same wording: measured latency and cost, the question-type rules, "batch related judgments into ONE call", and an explicit boundary — `jev_decision` returns verdicts and never prose; `jev_choose` scores but does not explain.
-3. **Hooks and user turns.** With `autoGuard.enabled`, every guarded shell-like call is audited *before* it runs (deterministic blacklist, then Jev) — no model decision involved. And any user can just ask: *"judge this ticket with `jev_decision`"*, *"rank these three approaches with `jev_choose`"*, *"run `jev_verify`"*.
+3. **Auto-triage (plugin-initiated, 0.8.4).** With `autoTriage.enabled` the plugin itself judges the first step of each turn and injects the routing advice as a plugin-sourced message; the agent does not have to decide to call Jev first, it simply reads the advice. Disable with `autoTriage.enabled: false`, widen the input floor with `autoTriage.minChars`, cap the per-session call count with `autoTriage.maxCallsPerSession`.
+4. **Hooks and user turns.** With `autoGuard.enabled`, every guarded shell-like call is audited *before* it runs (deterministic blacklist, then Jev) — no model decision involved. And any user can just ask: *"judge this ticket with `jev_decision`"*, *"rank these three approaches with `jev_choose`"*, *"run `jev_verify`"*.
 
 If the agent still ignores Jev, check in this order: `guidance.enabled` is not false; the prompt section logged `guidance registered` in the host output; `jev_decision` is in the tool list (`jev_guard_status` reports the tools it guards, not the registered set); and the task actually is a judgment call rather than a writing/reasoning task.
 
@@ -407,7 +446,9 @@ When `autoGuard.enabled: true`, two hooks run next to every guarded tool call:
 
 Every verdict — deterministic or Jev — is recorded in the session ledger and
 counted by `jev_guard_status`, which also surfaces any registration failure
-instead of letting it scroll past.
+instead of letting it scroll past. Since 0.8.4 the Jev verdicts of the guard are
+metered too (`onJevCall` → `kind: "judge"`), so a busy guard shows up in
+`jev_usage` instead of leaving the panel at zero.
 Evidence from the 0.7.5 audit itself (2026-10-04): three review payloads were
 denied by the 0.7.4 rules — two by the deterministic layer, one by Jev at 81–85%
 (threshold 0.8) — which is exactly why the hard rules became position-aware.

@@ -1,7 +1,7 @@
 {
   "name": "dsh-jev-verify",
-  "version": "0.8.3",
-  "description": "Jev (TypeSafe System One decision model) for DeepSeek Harness — six tools: jev_decision (up to 25 typed questions in one parallel call, measured median 266-484 ms), jev_choose (rank 2-10 approaches), jev_usage (local usage/quota panel: measured calls, tokens, cost, rolling windows, daily projections and an optional hard budget stop), jev_overview (session ledger), jev_guard_status (auto-guard audit), jev_verify (frozen 27-question live benchmark run 6-way parallel, 4.96 s wall, 96.3% measured). Plus an automatic tool-call guard (10 deterministic rules in two tiers - 7 hard-block, 3 Jev-judged - plus a Jev risk/loop backstop), system-prompt guidance so the agent actually calls it, a GUI settings card, and a compact usage pill in the composer (0.8.2) that reads a read-only local JSON route; the /jev mount always answers - a live status page while dashboard.enabled is off. TypeSafe exposes no balance endpoint, so the quota panel reports only locally measured usage against locally configured budgets - never a fabricated provider balance. Honest by design: no API key means an explicit error, never fabricated results; every registration is quarantined so a failure degrades one feature, never the profile.",
+  "version": "0.8.4",
+  "description": "Jev (TypeSafe System One decision model) for DeepSeek Harness — six tools: jev_decision (up to 25 typed questions in one parallel call, measured median 266-484 ms), jev_choose (rank 2-10 approaches), jev_usage (local usage panel: measured calls, tokens, cost, rolling windows and an optional hard budget stop), jev_overview (session ledger), jev_guard_status (auto-guard audit), jev_verify (frozen 27-question live benchmark run 6-way parallel, 4.96 s wall, 96.3% measured). Plus an automatic tool-call guard (10 deterministic rules in two tiers - 7 hard-block, 3 Jev-judged - plus a Jev risk/loop backstop) whose own Jev verdicts are now metered into the usage ledger, an agent/pre-step auto-triage router (0.8.4) that judges each turn's first step and injects plugin-sourced advice so the harness actually calls Jev, system-prompt guidance with mandatory-trigger rules, a GUI settings card, and a money-first composer usage pill that stays silent about quota status and reset countdowns unless a local budget really exists. The /jev mount always answers - a live status page while dashboard.enabled is off. TypeSafe exposes no balance endpoint, so the panel reports only locally measured usage against locally configured budgets - never a fabricated provider balance. Honest by design: no API key means an explicit error, never fabricated results; every registration is quarantined so a failure degrades one feature, never the profile.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -49,7 +49,8 @@
     "quota",
     "usage-dashboard",
     "budget",
-    "usage-pill"
+    "usage-pill",
+    "auto-triage"
   ],
   "license": "MIT",
   "engines": {
@@ -86,7 +87,7 @@
   },
   "scripts": {
     "bench": "node bench/bench.mjs",
-    "check": "node --check lib/index.js && node --check lib/cases.js && node --check bench/bench.mjs && node --check lib/guard.js && node --check lib/dashboard.js && node --check lib/usage.js && node --check client/client.js",
+    "check": "node --check lib/index.js && node --check lib/cases.js && node --check bench/bench.mjs && node --check lib/guard.js && node --check lib/dashboard.js && node --check lib/usage.js && node --check lib/triage.js && node --check client/client.js",
     "test": "node --test \"test/*.test.mjs\"",
     "test:functional": "node test/functional.test.mjs"
   },

@@ -333,6 +333,19 @@
 - 测试：`test/client.test.mjs` 新增 PASS 7（路径切分、生成的操作与数值强转、挂载时恰好一次原子修复及其 ops 顺序、二次渲染不重复、干净文档零写入）；`node test/client.test.mjs` PASS 1..7 全绿，`npm test` **29/29**（2725.8 ms），`node --check client/client.js` 通过。
 - 生效条件：纯客户端改动，**刷新页面即可**（client-hmr 在 ≤500 ms 内更新 rev），无需重启宿主。
 
+### 2026-10-07（v0.8.4：面板诚实化、护栏记账、自动预判）
+
+用户反馈三点：看板/胶囊暗示了不存在的额度（「额度重置 13 小时 41 分后」、无预算却写「额度正常」）、要的是 opencode-go 那种小型轻量面板、且 jev 在整段对话里 0 调用。逐条核实与修复：
+
+- **用户附的 `/jev` 404 截图不是当前状态。** 宿主重启后实测（PID 35716，09:42 起）：`GET /jev` → 200（1846 B 状态页）、`GET /jev/` → 200、`GET /jev/api/usage` → 200（1921 B 胶囊 JSON）；`/jev/api` 在 `dashboard.enabled=false` 时返回 404 是设计行为。截图对应的是插件尚未加载的旧时刻。
+- **记账缺口（真实 bug，不只是文案）。** 一次会话里 `jev_guard_status` 报 `safety.checks: 3`、`safety.jevCalls: 2`、`auditCalls: 6`，而用量账本全为 0 —— 护栏确实调了 2 次 Jev（0.06 / 0.03 两个 lastVerdicts），却没进账本。修法：`judgeRisky`/`judgeStall` 改为返回 `{ noul, latencyMs, usage }`（token 取自 `body.usage`，因为 `requestSystemOne` 只返回 `{ body, latencyMs }`），`applyAutoGuard` 新增 `onJevCall` 事件，`index.js` 以 `kind: "judge"`、`tool: "auto-guard"` 记账。
+- **无预算却宣称额度状态。** `quota.budgetConfigured` 新增（三个本地上限任一非 null）。`formatUsage`、`statusPage`、`pillPayload`、胶囊组件与看板 HTML 全部改为：无预算时不出现「额度正常」、不画对 ∞ 的进度条、不显示重置倒计时，文案改为「本机实测，未设任何上限」。实测探针（1 次 decision 1000/40 tok + 1 次 verify 27 calls 27000 tok）：无预算输出首行「Jev 本机用量（本机实测，未设任何上限，非供应商余额）」、小节「### 今日（未设上限，仅报实测）」、三行「调用/成本/会话 未设上限（本机实测 …）」，且**不含**任何「本地预算重置」；`quota: { enabled: true, dailyCallLimit: 28 }` 时首行变「（本机实测 + 本地自设预算，非供应商余额）」、小节「### 今日（本地自设上限）」、出现「调用  [████████████]  28/28  100%  状态 exceeded · 本地预算重置还剩 6h 0m」。
+- **胶囊金钱优先。** 折叠标签由「Jev · 今日 29 次 · $0.000534」改为「Jev · 今日 $0.000534 · 29 次」；弹层首两行为「今日成本」「累计（本插件实例）」，无预算时不再渲染三根进度条与「额度重置」行。
+- **自动预判（新模块 `lib/triage.js`）。** `agent/pre-step`（`{ prepend: true }`）里先 `await next()`，仅在 `step === 1`、未被 reject、未 abort、文本长度 ≥ `minChars`（默认 12）时发一次 4 问判定（intent / needs_judgment / judgment_kind / recommended_tool，state 截断 6000 字符）；结论作为 plugin 来源用户消息注入（`createUserMessage` 惰性 `import("@deepseek-ai/dsh-llm")`，解析失败则只记账不注入）；`WeakMap` 保证每个 (agent, turn) 至多一次；`maxCallsPerSession` 默认 200；任何异常 fail-open 返回原 decision。配置项 `autoTriage.{enabled,minChars,timeoutMs,maxCallsPerSession}` 默认 `true/12/4000/200`。
+- **引导强化。** `guidanceText` 增加【强制触发】清单（分类打标路由、优先级/严重度/满意度打分、真伪与合规核查、结构化抽取、2–10 方案择优）、【禁止绕过】（不得以「我已经知道答案」跳过、不得先抛选择题再补判定）、成本量级（约 $0.00002–0.0001，25 问同价）；注册段字符数由 0.8.3 的较小值变为 1509 字符（`present.test.mjs` 输出 `section tool:jev | order 3000 | chars 1509`）。
+- **测试：`npm test` 30/30（2501 ms）。** 新增 `test/triage.test.mjs` 五组（问题形状与建议文本；每 (agent, turn) 一次 + 注入 + 每次恰好一个账本事件；step≠1/被拒/abort/过短/畸形 payload 均不调用且不抛；API 失败 fail-open、缺 Key 只告警一次、失败不计费；`none` 只记账不注入、会话上限、`enabled: false` 完全不注册）；`test/guard.test.mjs` PASS 8 增加 `onJevCall` 延迟/用量透传断言；`test/usage.test.mjs` 增加无预算分支（不含「本地预算重置」「本地自设上限」「额度正常」）与 `budgetConfigured` 断言；`test/client.test.mjs` 更新胶囊标签断言并新增无预算快照分支。
+- **生效条件**：客户端（胶囊）改动刷新页面即生效；服务端（护栏记账、自动预判、引导、状态页）需重启宿主。本轮未发布 npm / GitHub Release / 市场 PR。
+
 ## 与 dsh-jev/官方博客声明的边界
 
 - 200x 提速、1/400 成本等对比数字依赖具体基线模型与工作负载，本插件不搬运这些相对值，只发布可直接核验的绝对值（延迟、成本、准确率、校准）。

@@ -133,6 +133,8 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     ".djev-pillMeterHead{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--dsw-alias-label-secondary);margin-bottom:3px}",
     ".djev-pillRows{margin-top:8px;border-top:.5px solid var(--dsw-alias-border-l2);padding-top:6px;display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--dsw-alias-label-tertiary)}",
     ".djev-pillRow{display:flex;justify-content:space-between;gap:8px}",
+    ".djev-pillLead span{color:var(--dsw-alias-label-secondary)}",
+    ".djev-pillLead b{color:var(--dsw-alias-label-primary);font-weight:600;font-size:12px}",
     ".djev-pillRow b{color:var(--dsw-alias-label-secondary);font-weight:500}",
     ".djev-pillFoot{margin-top:9px;display:flex;justify-content:space-between;align-items:center;gap:8px;color:var(--dsw-alias-label-tertiary);font-size:10px}",
     ".djev-pillBtn{border:.5px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-secondary);border-radius:6px;padding:1px 6px;font-size:10px;cursor:pointer}",
@@ -1200,7 +1202,12 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
   /** Accept either the pill projection or a raw usage snapshot from jev_usage. */
   function pillFromRaw(raw) {
     if (!raw || typeof raw !== "object") return null;
-    if (raw.kind === "jev-usage-pill") return raw;
+    if (raw.kind === "jev-usage-pill") {
+      var passthrough = Object.assign({}, raw);
+      if (passthrough.budgetConfigured == null) passthrough.budgetConfigured = pillHasBudget({ limits: passthrough.limits });
+      if (!passthrough.all) passthrough.all = { calls: Number(passthrough.allCalls) || 0, costUs: Number(passthrough.allCostUs) || 0 };
+      return passthrough;
+    }
     var snap = raw.usage && typeof raw.usage === "object" ? raw.usage : raw;
     if (!snap || typeof snap !== "object" || !snap.quota) return null;
     var q = snap.quota || {};
@@ -1212,6 +1219,8 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       ok: true,
       asOf: snap.asOf || new Date().toISOString(),
       status: q.status || "ok",
+      budgetConfigured: pillHasBudget(q),
+      all: { calls: (win.all && win.all.calls) || 0, costUs: (win.all && win.all.costUs) || 0 },
       enabled: q.enabled !== false,
       enforce: q.enforce === true,
       warnAtPercent: q.warnAtPercent == null ? 80 : q.warnAtPercent,
@@ -1235,6 +1244,20 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     };
   }
 
+  /**
+   * True only when the user configured at least one LOCAL budget. TypeSafe is a
+   * metered API with no balance endpoint: without a local budget there is no
+   * quota to be "normal", no percentage to fill and nothing to reset — so the
+   * panel must not imply any of that.
+   */
+  function pillHasBudget(q) {
+    try {
+      if (q && q.budgetConfigured === true) return true;
+      var lim = (q && q.limits) || {};
+      return lim.dailyCalls != null || lim.dailyCostUsd != null || lim.sessionCalls != null;
+    } catch (e) { return false; }
+  }
+
   function pillMoney(usd) {
     var n = Number(usd) || 0;
     return n >= 0.01 ? "$" + n.toFixed(4) : "$" + n.toFixed(6);
@@ -1254,10 +1277,12 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       if (!pill || pill.ok === false) return "Jev · 额度不可用";
       if (pill.enabled === false) return "Jev · 额度已关闭";
       var today = pill.today || {};
-      var text = "Jev · 今日 " + (Number(today.calls) || 0) + " 次";
+      var calls = Number(today.calls) || 0;
       var cost = Number(today.costUs) || 0;
-      if (cost > 0) text += " · " + pillMoney(cost);
-      return text;
+      // Money first: TypeSafe bills per call, so the cost is the number a user
+      // actually wants in the collapsed pill.
+      if (cost > 0) return "Jev · 今日 " + pillMoney(cost) + " · " + calls + " 次";
+      return "Jev · 今日 " + calls + " 次";
     } catch (e) {
       return "Jev · 额度不可用";
     }
@@ -1298,7 +1323,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     var error = props && props.error;
     if (!pill || pill.ok === false) {
       return h("div", { className: "djev-pillPop" },
-        h("div", { className: "djev-pillPopTitle" }, "Jev 用量"),
+        h("div", { className: "djev-pillPopTitle" }, "Jev 本机用量"),
         h("div", { className: "djev-pillPopSub" }, (error || (pill && pill.error) || "暂时读不到本机用量") + "。这里只显示本机实测数据；对话内可用 jev_usage 查看完整面板。"),
       );
     }
@@ -1312,6 +1337,20 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     var topTools = Object.keys(byTool).map(function (name) { return { name: name, calls: Number(byTool[name]) || 0 }; })
       .sort(function (a, b) { return b.calls - a.calls; }).slice(0, 3);
     var rows = [];
+    var hasBudget = pillHasBudget({ limits: limits, budgetConfigured: pill.budgetConfigured });
+    var all = pill.all || {};
+    // Money first: TypeSafe bills per call, so cost leads; call counts follow.
+    rows.push(h("div", { className: "djev-pillRow djev-pillLead", key: "cost" },
+      h("span", null, "今日成本"),
+      h("b", null, pillMoney(Number(today.costUs) || 0))));
+    rows.push(h("div", { className: "djev-pillRow", key: "all" },
+      h("span", null, "累计（本插件实例）"),
+      h("b", null, pillMoney(Number(all.costUs) || 0) + " · " + (Number(all.calls) || 0) + " 次")));
+    if (!hasBudget) {
+      rows.push(h("div", { className: "djev-pillRow", key: "calls" },
+        h("span", null, "今日调用"),
+        h("b", null, (Number(today.calls) || 0) + " 次")));
+    }
     rows.push(h("div", { className: "djev-pillRow", key: "tok" },
       h("span", null, "今日 tokens"),
       h("b", null, (Number(today.inputTokens) || 0) + " 入 / " + (Number(today.outputTokens) || 0) + " 出")));
@@ -1331,21 +1370,31 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
         h("span", null, "按工具"),
         h("b", null, topTools.map(function (t) { return t.name + " " + t.calls; }).join(" · "))));
     }
-    rows.push(h("div", { className: "djev-pillRow", key: "reset" },
-      h("span", null, "额度重置"),
-      h("b", null, pillDur(pill.resetInMs) + "后")));
-    return h("div", { className: "djev-pillPop" },
-      h("div", { className: "djev-pillPopTitle" }, "Jev 本机用量 · " + pillStatusText(pill)),
-      h("div", { className: "djev-pillPopSub" }, pill.enforce ? "触顶会拦截新的 Jev 调用。" : "触顶只告警，不拦截调用。"),
-      pillMeter("今日调用", (Number(used.dailyCalls) || 0) + (limits.dailyCalls == null ? " 次" : " / " + limits.dailyCalls + " 次"), percent.dailyCalls),
-      pillMeter("今日成本", pillMoney(used.dailyCostUsd) + (limits.dailyCostUsd == null ? "" : " / $" + Number(limits.dailyCostUsd).toFixed(2)), percent.dailyCostUsd),
-      pillMeter("本实例调用", (Number(used.sessionCalls) || 0) + (limits.sessionCalls == null ? " 次" : " / " + limits.sessionCalls + " 次"), percent.sessionCalls),
-      h("div", { className: "djev-pillRows" }, rows),
-      h("div", { className: "djev-pillFoot" },
-        h("span", null, (props.at ? new Date(props.at).toLocaleTimeString() : "尚未刷新") + " · 本机实测，非账户余额"),
-        h("button", { type: "button", className: "djev-pillBtn", onClick: props.onRefresh, disabled: props.busy === true }, props.busy ? "刷新中" : "刷新"),
-      ),
-    );
+    if (hasBudget) {
+      // A reset countdown only exists for a LOCALLY configured budget; showing
+      // one without a budget is the deception the panel must never repeat.
+      rows.push(h("div", { className: "djev-pillRow", key: "reset" },
+        h("span", null, "本地预算重置"),
+        h("b", null, pillDur(pill.resetInMs) + "后")));
+    }
+    var children = [
+      h("div", { className: "djev-pillPopTitle", key: "title" }, hasBudget ? "Jev 本机用量 · " + pillStatusText(pill) : "Jev 本机用量 · 按量计费"),
+      h("div", { className: "djev-pillPopSub", key: "sub" },
+        hasBudget
+          ? (pill.enforce === true ? "本地自设预算，触顶会拦截新的 Jev 调用。" : "本地自设预算，触顶只告警，不拦截调用。")
+          : "直连 TypeSafe 按量计费，本机未设任何上限，只报本机实测用量。TypeSafe 没有余额接口。"),
+    ];
+    if (hasBudget) {
+      children.push(pillMeter("今日调用（本地自设上限）", (Number(used.dailyCalls) || 0) + (limits.dailyCalls == null ? "" : " / " + limits.dailyCalls), percent.dailyCalls));
+      children.push(pillMeter("今日成本（本地自设上限）", pillMoney(used.dailyCostUsd) + (limits.dailyCostUsd == null ? "" : " / $" + Number(limits.dailyCostUsd).toFixed(2)), percent.dailyCostUsd));
+      children.push(pillMeter("本实例调用（本地自设上限）", (Number(used.sessionCalls) || 0) + (limits.sessionCalls == null ? "" : " / " + limits.sessionCalls), percent.sessionCalls));
+    }
+    children.push(h("div", { className: "djev-pillRows", key: "rows" }, rows));
+    children.push(h("div", { className: "djev-pillFoot", key: "foot" },
+      h("span", null, (props.at ? new Date(props.at).toLocaleTimeString() : "尚未刷新") + " · 本机实测，非账户余额"),
+      h("button", { type: "button", className: "djev-pillBtn", onClick: props.onRefresh, disabled: props.busy === true }, props.busy ? "刷新中" : "刷新"),
+    ));
+    return h("div", { className: "djev-pillPop" }, children);
   }
 
   /** Poll the read-only usage route; resolves to a pill object or {ok:false}. */

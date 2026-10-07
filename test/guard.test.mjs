@@ -132,27 +132,40 @@ assert.equal(seen[0].deterministic, true, "deterministic tier flagged");
 assert.equal(seen[0].tool, "bash", "deterministic deny event carries the tool name");
 assert.equal(rtE.gs.safety.deterministicDenied, 1);
 const jevSeen = [];
+const jevCalls = [];
 const jevCtx = fakeCtx();
 const { applyAutoGuard: applyJ } = createGuardModule({ requestSystemOne: makeRequestSystemOne() });
-applyJ(jevCtx, { autoGuard: { enabled: true } }, options, { onSafetyDeny: (e) => jevSeen.push(e) });
+applyJ(jevCtx, { autoGuard: { enabled: true } }, options, { onSafetyDeny: (e) => jevSeen.push(e), onJevCall: (e) => jevCalls.push(e) });
 const jd = await jevCtx.handlers["tools/pre-execute"]({ name: "pwsh", arguments: { command: "wipe the staging data store" } }, nextAllow);
 assert.equal(jd.kind, "deny", "Jev tier still denies");
 assert.equal(jevSeen.length, 1, "exactly one Jev deny event");
 assert.equal(jevSeen[0].deterministic, false, "Jev tier flagged");
 assert.equal(jevSeen[0].tool, "pwsh", "Jev deny event carries the tool name");
 assert.ok(jevSeen[0].confidence >= 0.85, "confidence reported on the event");
+// 0.8.4: the guard's own Jev call must be observable, so the usage ledger can
+// count it (the panel used to read "今日调用 0 次" while the guard had called Jev).
+assert.equal(jevCalls.length, 1, "the safety verdict reports its own call");
+assert.equal(jevCalls[0].source, "safety");
+assert.equal(jevCalls[0].tool, "pwsh");
+assert.equal(jevCalls[0].latencyMs, 20, "verdict latency propagated");
+assert.deepEqual(jevCalls[0].usage, { input_tokens: 10, output_tokens: 1 }, "verdict token usage propagated");
 mock.answers.stalled.noul = 0.9;
 const advSeen = [];
+const advCalls = [];
 const advCtx = fakeCtx();
 const { applyAutoGuard: applyA } = createGuardModule({ requestSystemOne: makeRequestSystemOne() });
-applyA(advCtx, { autoGuard: { enabled: true, loopConsecutive: 3, loopMinChars: 50 } }, options, { onLoopAdvisory: (e) => advSeen.push(e) });
+applyA(advCtx, { autoGuard: { enabled: true, loopConsecutive: 3, loopMinChars: 50 } }, options, { onLoopAdvisory: (e) => advSeen.push(e), onJevCall: (e) => advCalls.push(e) });
 for (let k = 0; k < 3; k += 1) {
   await advCtx.handlers["tools/post-execute"]({ name: "pwsh" }, { isError: false, content: [{ type: "text", text: big }] }, async () => ({ kind: "accept" }));
 }
 assert.equal(advSeen.length, 1, "exactly one loop advisory event");
 assert.equal(advSeen[0].tool, "pwsh", "loop advisory carries the tool name");
 assert.ok(advSeen[0].noul >= 0.85, "advisory reports the Jev probability");
-console.log("PASS 8: onSafetyDeny (both tiers) and onLoopAdvisory fire with the tool name");
+assert.equal(advCalls.length, 1, "the loop verdict is a real Jev call too");
+assert.equal(advCalls[0].source, "loop");
+assert.equal(advCalls[0].latencyMs, 20);
+assert.deepEqual(advCalls[0].usage, { input_tokens: 10, output_tokens: 1 });
+console.log("PASS 8: onSafetyDeny (both tiers), onLoopAdvisory and onJevCall fire with the tool name");
 
 // the verdict cache is bounded, so a long session cannot grow it without limit
 const cacheCtx = fakeCtx();
