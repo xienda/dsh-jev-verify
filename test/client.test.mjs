@@ -35,10 +35,17 @@ const body = code.slice(start, end).replace(/^\s*/, "");
 const reactStub = {
   createElement: (type, props, ...kids) => ({ __jsx: true, type, props, kids }),
   useState: () => [undefined, () => {}],
-  useEffect: () => {},
+  // Effects are captured so a test can run them once, the way a mount would.
+  useEffect: (fn) => { effects.push(fn); },
   useSyncExternalStore: () => snapshotRef,
 };
 let snapshotRef = { value: {}, writable: true };
+/** Mount-time effects produced by the last render(s). */
+const effects = [];
+function runEffects() {
+  const pending = effects.splice(0, effects.length);
+  for (const fn of pending) fn();
+}
 const factory = new Function("require", body + "\nreturn module.exports;");
 const moduleExports = factory((name) => (name === "react" ? reactStub : {}));
 assert.ok(moduleExports && typeof moduleExports.apply === "function", "apply exported");
@@ -56,19 +63,21 @@ console.log("PASS 1: declares only the services every generation provides");
  * Drive apply against one generation.
  * @param withSettingsScope - legacy generation (service + card slot present).
  */
-function runApply(withSettingsScope) {
+function runApply(withSettingsScope, scopeExtra = {}) {
   const slotInjects = [];
   const registered = [];
+  const writes = [];
   const ctx = {
     settingsScope: withSettingsScope
       ? {
           bind: (spec) => {
             assert.equal(spec.namespace, "jev-verify");
-            return {
+            return Object.assign({
               subscribe: () => () => {},
               getSnapshot: () => ({ value: { model: "jev-latest" }, writable: true }),
-              set: async () => {},
-            };
+              set: async (path, value) => { writes.push({ via: "set", path, value }); },
+              mutate: async (ops) => { writes.push({ via: "mutate", ops }); },
+            }, scopeExtra);
           },
           describe: () => ({ getSnapshot: () => ({ status: "ready", view: { namespaces: [{ ns: "jev-verify" }] } }) }),
         }
@@ -86,7 +95,7 @@ function runApply(withSettingsScope) {
     logger: { warn: (m) => console.log("CLIENT WARN:", m) },
   };
   assert.doesNotThrow(() => moduleExports.apply(ctx), "apply must not throw");
-  return { slotInjects, registered };
+  return { slotInjects, registered, writes };
 }
 
 // --- PASS 2: legacy generation registers both the card and the tool views.
@@ -294,5 +303,59 @@ console.log("PASS 5: apply is defensive on hostile hosts");
   assert.doesNotThrow(() => { pillTree = render(entry.Comp({})); }, "an unloaded pill must not throw");
   assert.match(textOf(pillTree).join(" | "), /Jev · 额度不可用/, "without data the pill stays a quiet label");
   console.log("PASS 6: composer usage pill renders numbers and degrades quietly");
+}
+// --- PASS 7 (0.8.3): a save must reach the schema as NESTED paths, and a
+// document written by <= 0.8.2 (literal dotted keys) must be repaired on mount.
+// SettingsScope.set(field) stores path: [field], so the dotted field name used
+// to land as one unknown key: the card said "saved" and nothing changed.
+{
+  const { buildOps, pathSegments, legacyFlatPaths } = moduleExports.__internal;
+  assert.deepEqual(pathSegments("autoGuard.denyThreshold"), ["autoGuard", "denyThreshold"]);
+  assert.deepEqual(pathSegments("apiKey"), ["apiKey"]);
+  assert.deepEqual(pathSegments(""), []);
+  assert.deepEqual(legacyFlatPaths({ "dashboard.basePath": "jev", enabled: true }), ["dashboard.basePath"]);
+  assert.deepEqual(legacyFlatPaths(null), []);
+  assert.deepEqual(legacyFlatPaths({ nested: { a: 1 } }), []);
+
+  const ops = buildOps({ "autoGuard.maxJevCallsPerSession": "60", model: "jev-latest" });
+  assert.deepEqual(ops, [
+    { op: "set", path: ["autoGuard", "maxJevCallsPerSession"], value: 60 },
+    { op: "set", path: ["model"], value: "jev-latest" },
+  ], "a saved field becomes one nested segment path, with numeric text coerced");
+  assert.deepEqual(buildOps(null), []);
+
+  // The mount repair: both flat keys rewritten in ONE atomic mutation.
+  effects.length = 0;
+  snapshotRef = {
+    value: { enabled: true, apiKeyEnv: "TYPESAFE_API_KEY" },
+    writable: true,
+    user: { "dashboard.basePath": "jev", "autoGuard.maxJevCallsPerSession": 60 },
+  };
+  const { slotInjects, writes } = runApply(true);
+  const card = slotInjects.find((s) => s.name === "settings.plugin.item").fn().next().value;
+  render(card.Comp({}));
+  runEffects();
+  assert.equal(writes.length, 1, "exactly one repair mutation");
+  assert.equal(writes[0].via, "mutate");
+  assert.deepEqual(writes[0].ops, [
+    { op: "set", path: ["dashboard", "basePath"], value: "jev" },
+    { op: "unset", path: ["dashboard.basePath"] },
+    { op: "set", path: ["autoGuard", "maxJevCallsPerSession"], value: 60 },
+    { op: "unset", path: ["autoGuard.maxJevCallsPerSession"] },
+  ]);
+
+  // A second render/effect pass must not repeat it, and a clean document is a no-op.
+  effects.length = 0;
+  render(card.Comp({}));
+  runEffects();
+  assert.equal(writes.length, 1, "the repair runs once per scope");
+  snapshotRef = { value: { enabled: true }, writable: true };
+  const clean = runApply(true);
+  const cleanCard = clean.slotInjects.find((s) => s.name === "settings.plugin.item").fn().next().value;
+  effects.length = 0;
+  render(cleanCard.Comp({}));
+  runEffects();
+  assert.equal(clean.writes.length, 0, "a nested document needs no repair");
+  console.log("PASS 7: settings writes use nested paths and legacy flat keys are repaired");
 }
 console.log("ALL CLIENT TESTS PASSED");

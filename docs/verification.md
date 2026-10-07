@@ -323,6 +323,16 @@
 - 稳定渲染文本（回归对照）：`Jev 本机用量 · 额度正常 | 触顶只告警，不拦截调用。 | 今日调用 | 29 / 200 次 | 今日成本 | $0.000534 / $0.50 | 本实例调用 | 29 次 | 今日 tokens | 8700 入 / 900 出 | 今日判定时延 | 中位 933 ms | 护栏拦截 | 2 次 | 本插件实例 | 29 次 | 按工具 | jev_verify 27 · jev_decision 1 · jev_choose 1 | 额度重置 | 1 小时 0 分后 | 20:00:00 · 本机实测，非账户余额 | 刷新`。
 - 生效条件（客户端 bundle 的更新链路，本轮新查）：宿主 `@deepseek-ai/dsh-client-modules` 的 `bundleResource()`（`lib/index.js:857-870`）只从**内存**中精确匹配 `pathname + search`（含 rev），未命中即 404；bundle 只在 `reconcilePackage()`（`:823`）读盘，此后唯一能让新字节进入 graph 的入口是 `rebuilt(id)`（`:541-562`）。`rebuilt()` 的唯一调用方是 `@deepseek-ai/dsh-client-hmr`（`lib/index.js:49`），它按 `stat` 轮询（`mtimeMs + size`，默认 500 ms）并 `setInterval` 驱动（`:91-108`）；而 `dsh-web-app` 的 cordis patch 中 `client-hmr` 行是「always mounted」（`:167-168`），故**客户端半边改动只刷新页面即可生效**（轮询会在 ≤500 ms 内检测到并更新 rev），服务端 `lib/` 改动仍需重启 `dsh web` 宿主。
 - 部署：三副本（源 `D:\lab\skill\jev`、部署 `D:\lab\jev`、pnpm store `.pnpm/dsh-jev-verify@file+vendor/...`）逐文件 sha256 核对一致。
+### 2026-10-07（v0.8.3：设置卡片「保存成功却无效」的根因修复）
+
+- 触发：用户 m05876「已重启，测试，然后更新插件市场」。重启后实测：新宿主 PID 35716；`/jev` 200（1481 B 状态页）、`/jev/` 200、`/jev/api/usage` 200（1835 B 胶囊 JSON）、`/jev/api` 404（看板未开启，设计如此）；插件自注册的 webServer 路由不需要 GUI 鉴权 Cookie。
+- GUI 抓取方法（本轮掌握）：`.credentials.yaml` 的 `client-connection/browser-session` 记录里 payload.secret 是签名密钥，按 `dsh-client-connection/lib/index.js:295-301` 的 encodeCookie 伪造 `dsh-auth-<hash>` Cookie 后，`GET /` 返回 200（28858 B，含 `__DSH_BOOT__`，jev 的 bundle rev = `aad824c83f5d7240-54`）；带 Cookie 拉该 bundle 得 200 / 85226 B，其中含 0.8.2 的 `djev-pill`、`conversation.input.right`，不含 0.8.1 ⇒ client-hmr 已把 0.8.2 客户端字节送进内存 graph（刷新页面即可，无需重启）。
+- 线上设置文档（RPC `POST /api/settings/describe`，body `{type:"client-request", rpcId, method:"settings/describe", payload:{args:{}}}`；args 必须是普通对象）：17 个命名空间；`jev-verify` 的 value 中**没有任何空对象路径** ⇒ 0.8.1 的 schema 修复确实生效（`apiKeyEnv:"TYPESAFE_API_KEY"`、`enabled:true`、`dashboard.basePath:"/jev"` 等）。
+- 新根因：`dsh-client-ui-settings/lib/client.js:1015-1021` 的 `set(field, value)` 实现为 `this.mutate([{op:"set", path:[field], value}])`——**单段路径**。本插件卡片此前把点号路径整串当 field 传入，于是文档里出现字面键 `"dashboard.basePath": "jev"`、`"autoGuard.maxJevCallsPerSession": 60`；解析后的 value 仍是 schema 默认值（`/jev`、`50`）⇒ 保存成功但从未生效。这也修正了 0.8.2 对 404 的第二层解释：生效的 basePath 一直是默认 `/jev`，404 只由 `dashboard.enabled=false` 造成（`normalizeBasePath` 仍作为健壮性修复保留）。
+- 修复（客户端 `client/client.js`）：新增 `pathSegments()`、`legacyFlatPaths()`、`buildOps()`（草稿 → `{op:"set", path:[段…], value}`，数值字段仍强转）；`save()` 改为一次 `scope.mutate(ops)`，仅在宿主无 `mutate` 时才回退链式 `scope.set`；新增一次性挂载修复 effect（`WeakSet` 记账，每个字面键产出 `set 嵌套 + unset 字面键` 两条 op，一次原子变更，整段 try/catch）。`__DSH_JEV_CLIENT_VERSION__ = "0.8.3"`，`__internal` 导出 `buildOps`/`pathSegments`/`legacyFlatPaths`。宿主侧 `bind()` 返回的 `SettingsScopeController` 确实带 `mutate`（`dsh-client-ui-settings/lib/client.js:1169` → `:1015/:1028/:1040`）。
+- 测试：`test/client.test.mjs` 新增 PASS 7（路径切分、生成的操作与数值强转、挂载时恰好一次原子修复及其 ops 顺序、二次渲染不重复、干净文档零写入）；`node test/client.test.mjs` PASS 1..7 全绿，`npm test` **29/29**（2725.8 ms），`node --check client/client.js` 通过。
+- 生效条件：纯客户端改动，**刷新页面即可**（client-hmr 在 ≤500 ms 内更新 rev），无需重启宿主。
+
 ## 与 dsh-jev/官方博客声明的边界
 
 - 200x 提速、1/400 成本等对比数字依赖具体基线模型与工作负载，本插件不搬运这些相对值，只发布可直接核验的绝对值（延迟、成本、准确率、校准）。

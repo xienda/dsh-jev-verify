@@ -40,6 +40,28 @@ ledger and auditable via `jev_guard_status`.
 - `jev_verify` refuses to report numbers it did not measure;
 - the benchmark CLI (`bench/bench.mjs`) is dependency-free and reproducible with any key.
 
+## What's new in 0.8.3
+
+Settings you save now actually take effect.
+
+- **Root cause.** The card handed dotted field names to `scope.set(field)`, and that
+  call stores `path: [field]` — one segment. A field such as `dashboard.basePath` was
+  therefore written into the settings document as a single literal key named
+  `dashboard.basePath`, which no schema ever resolves. Saving reported success and
+  changed nothing: on a live host `~/.dsh/settings.yaml` held the flat keys
+  `autoGuard.maxJevCallsPerSession: 60` and `dashboard.basePath: jev` while the resolved
+  document still showed the schema defaults (`50` and `/jev`). Found by reading the live
+  document over the `settings/describe` RPC after the 0.8.2 restart.
+- **Fix.** The card builds `{ op: "set", path: [<segment>, …] }` operations and commits
+  them in one atomic `scope.mutate(ops)` call; it only falls back to chained
+  `scope.set` on hosts that expose no `mutate`.
+- **Repair on open.** A one-time mount effect rewrites documents written by <= 0.8.2 that
+  contain literal dotted keys: for each one, set the nested path and unset the literal
+  key, in one atomic mutation, guarded by a `WeakSet` so it runs once per scope and
+  wrapped so a failed repair can never break the card.
+- Client-only: **refresh the page** — no host restart. `test/client.test.mjs` PASS 7
+  covers path splitting, the generated operations, the atomic repair and its idempotence.
+  `npm test` is 29/29.
 ## What's new in 0.8.2
 
 Two things the board got wrong, plus a usage surface that does not need the board at all.
@@ -468,6 +490,11 @@ cannot be decoded. `npm test` is 29/29. See the 0.8.1 section above.
 when the board is off), a read-only `/jev/api/usage` route always mounts, and the
 composer gained a compact `Jev · 今日 N 次 · $…` usage pill with an expanding popover.
 `npm test` is 29/29. See the 0.8.2 section above.
+
+**0.8.3**: settings saves actually reach the schema — nested `path` segments committed
+in one atomic `mutate`, plus a one-time repair of documents written by <= 0.8.2 with
+literal dotted keys. Client-only: refresh the page. `npm test` is 29/29. See the 0.8.3
+section above.
 
 **Regression (2026-09-28, v0.7.0)**: in a headless profile with
 `autoGuard.enabled: true`, `jev_guard_status` reports the armed guard (tools

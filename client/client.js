@@ -14,7 +14,7 @@
  * Hand-written, build-free, defensive: any failure degrades only this card.
  */
 window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
-  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.8.2";
+  globalThis.__DSH_JEV_CLIENT_VERSION__ = "0.8.3";
   "use strict";
   var module = { exports: {} };
   var react = require("react");
@@ -248,11 +248,54 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     g.fields.forEach(function (f) { FIELD_BY_PATH[f.path] = f; });
   });
 
+  /**
+   * Draft -> ordered mutation ops.
+   *
+   * Every op carries a SEGMENT ARRAY: SettingsScope.set(field) wraps its
+   * argument as path: [field], so passing the dotted name stored one literal
+   * "dashboard.basePath" key that the schema never saw - the write reported
+   * success and changed nothing.
+   * @param draft - { dotted path: editor value }
+   */
+  function buildOps(draft) {
+    if (draft == null) return [];
+    return Object.keys(draft).map(function (path) {
+      var field = FIELD_BY_PATH[path];
+      var next = draft[path];
+      // Numeric controls collect text; the config schema expects a number.
+      if (field && field.numeric && typeof next === "string" && next.trim() !== "" && isFinite(Number(next))) {
+        next = Number(next);
+      }
+      return { op: "set", path: pathSegments(path), value: next };
+    });
+  }
+
   function pathGet(obj, path) {
     return path.split(".").reduce(function (acc, k) {
       return acc == null ? acc : acc[k];
     }, obj);
   }
+
+  /** A dotted field path as the segment array the settings service expects. */
+  function pathSegments(path) {
+    return String(path == null ? "" : path).split(".").filter(function (k) { return k !== ""; });
+  }
+
+  /**
+   * Top-level keys of a raw settings layer that still carry their dots.
+   *
+   * SettingsScope.set(field) wraps its argument as path: [field], so a dotted
+   * field name used to be stored as ONE literal key ("dashboard.basePath") that
+   * the service then resolves to the schema default - the save looked fine and
+   * changed nothing. Nested writes fix new saves; this finds the old ones.
+   */
+  function legacyFlatPaths(userLayer) {
+    if (userLayer == null || typeof userLayer !== "object") return [];
+    return Object.keys(userLayer).filter(function (k) { return k.indexOf(".") !== -1; });
+  }
+
+  /** Scopes whose legacy flat keys were already rewritten (one repair each). */
+  var MIGRATED = new WeakSet();
 
   /**
    * Read a dotted path, tolerating a store that keeps the dots inside the key
@@ -357,6 +400,24 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     var [failed, setFailed] = useState(false);
     var [savedAt, setSavedAt] = useState(0);
 
+    // Repair documents written by <= 0.8.2: rewrite each literal dotted key as
+    // its nested path in the same atomic mutation, so the value the user saved
+    // actually applies (they used to be stored flat and silently ignored).
+    useEffect(function () {
+      try {
+        if (!scope || MIGRATED.has(scope) || typeof scope.mutate !== "function") return;
+        var flats = legacyFlatPaths(snapshot && snapshot.user);
+        if (flats.length === 0) return;
+        MIGRATED.add(scope);
+        var ops = [];
+        flats.forEach(function (k) {
+          ops.push({ op: "set", path: pathSegments(k), value: snapshot.user[k] });
+          ops.push({ op: "unset", path: [k] });
+        });
+        Promise.resolve(scope.mutate(ops)).catch(function () {});
+      } catch (e) { /* a migration failure must never break the card */ }
+    }, [snapshot]);
+
     var dirty = draft != null && Object.keys(draft).length > 0;
 
     useEffect(function () {
@@ -388,18 +449,23 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       if (draft == null) return;
       setSaving(true);
       setFailed(false);
-      var paths = Object.keys(draft);
-      var chain = Promise.resolve();
-      paths.forEach(function (path) {
-        var field = FIELD_BY_PATH[path];
-        var next = draft[path];
-        // Numeric controls collect text; the config schema expects a number.
-        if (field && field.numeric && typeof next === "string" && next.trim() !== "" && isFinite(Number(next))) {
-          next = Number(next);
+      var ops = buildOps(draft);
+      if (ops.length === 0) { setSaving(false); return; }
+      var run;
+      try {
+        if (typeof scope.mutate === "function") {
+          run = Promise.resolve(scope.mutate(ops));
+        } else {
+          var chain = Promise.resolve();
+          ops.forEach(function (op) {
+            chain = chain.then(function () { return scope.set(op.path.join("."), op.value); });
+          });
+          run = chain;
         }
-        chain = chain.then(function () { return scope.set(path, next); });
-      });
-      chain.then(function () {
+      } catch (e) {
+        run = Promise.reject(e);
+      }
+      run.then(function () {
         setSaving(false);
         setDraft(null);
         setSavedAt(Date.now());
@@ -1494,7 +1560,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     // Internal, for the offline render tests only: decoding the wire answer
     // shapes is the part of this bundle most worth pinning down, and it needs
     // no DOM. Not part of the plugin's service surface.
-    __internal: { readAnswer: readAnswer, contentText: contentText, parseJSON: parseJSON, keySourceOf: keySourceOf, rawLayersOf: rawLayersOf, layerGet: layerGet, pillFromRaw: pillFromRaw, pillLabel: pillLabel, pillTone: pillTone, PillBody: PillBody, UsagePill: UsagePill, PILL_ROUTES: PILL_ROUTES },
+    __internal: { buildOps: buildOps, pathSegments: pathSegments, legacyFlatPaths: legacyFlatPaths, readAnswer: readAnswer, contentText: contentText, parseJSON: parseJSON, keySourceOf: keySourceOf, rawLayersOf: rawLayersOf, layerGet: layerGet, pillFromRaw: pillFromRaw, pillLabel: pillLabel, pillTone: pillTone, PillBody: PillBody, UsagePill: UsagePill, PILL_ROUTES: PILL_ROUTES },
   };
   return module.exports;
 }});

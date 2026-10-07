@@ -22,6 +22,14 @@ Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 A
 - `jev_verify` 拒绝报告任何未经实测的数字；
 - 独立的基准 CLI（`bench/bench.mjs`）零依赖，任何人可用任意 Key 复现发布的数据。
 
+## 0.8.3 更新
+
+设置里保存的项，现在真的会生效。
+
+- **根因**：卡片把点号字段名整串交给 `scope.set(field)`，而该调用只写单段路径 `path: [field]`，于是 `dashboard.basePath` 这类字段在设置文档里变成一个名为 `dashboard.basePath` 的字面键，schema 永远解析不到。保存提示成功、实际什么也没变：在已重启的宿主上，`~/.dsh/settings.yaml` 里存着扁平键 `autoGuard.maxJevCallsPerSession: 60` 与 `dashboard.basePath: jev`，而解析后的文档仍是 schema 默认值 `50` 与 `/jev`。这是 0.8.2 重启后通过 `settings/describe` RPC 读取线上文档时发现的。
+- **修复**：卡片改为生成 `{ op: "set", path: [<段>, …] }` 操作，并用一次原子 `scope.mutate(ops)` 提交；仅在宿主不提供 `mutate` 时才回退为链式 `scope.set`。
+- **打开即修复**：新增一次性挂载 effect——若文档里存在 ≤0.8.2 写下的字面点号键，则对每个键先写入嵌套路径、再删除字面键，并在一次原子变更内完成；用 `WeakSet` 保证每个作用域只修一次，整段 try/catch，修复失败绝不影响卡片。
+- 纯客户端改动：**刷新页面即可**，无需重启宿主。`test/client.test.mjs` 的 PASS 7 覆盖路径切分、生成的操作、原子修复与幂等性。`npm test` 29/29。
 ## 0.8.2 更新
 
 看板的两处毛病，外加一个完全不依赖看板的用量入口。
@@ -242,6 +250,8 @@ TYPESAFE_API_KEY=... node bench/bench.mjs --repeat 3 # 延迟稳定性
 **0.8.1**：注册给设置服务的 schema 改为纯 schema（不带 `volatile` 标记），设置卡片重新能解码，绝不再把已配置的 Key 报成「未配置」；解码值不可用时卡片回退读原始配置图层。`npm test` 29/29，详见上面的「0.8.1 更新」。
 
 **0.8.2**：`/jev` 不再 404（`dashboard.basePath` 规范化；看板未开启也返回实时状态页），只读路由 `/jev/api/usage` 无条件挂载，输入框右侧新增 `Jev · 今日 N 次 · $…` 的紧凑用量胶囊（可展开小面板）。`npm test` 29/29，详见上面的「0.8.2 更新」。
+
+**0.8.3**：设置保存真正写入 schema——用嵌套 `path` 段一次性原子提交，并对 ≤0.8.2 写下的字面点号键文档做一次性修复。纯客户端修复，刷新页面即可。`npm test` 29/29，详见上面的「0.8.3 更新」。
 
 **回归验证（2026-09-28，v0.7.0）**：在 headless profile（`autoGuard.enabled: true`）中，`jev_guard_status` 正确报告已武装的护栏（工具清单、`deny threshold 0.8`、预算），`jev_overview` 正常返回看板，不再出现此前的 `credentialRef` 崩溃——即 volatile 配置解包修复；当时 `npm test` 19/19 通过（今天为 29/29）。
 
