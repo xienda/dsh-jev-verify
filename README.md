@@ -14,6 +14,7 @@ opt-in **auto-guard** (risk + loop checks), an honest local
 | --- | --- | --- |
 | `jev_decision` | Up to 25 typed questions (`choice` / `score` / `noul`) about one `state`, answered **in parallel in one call** (published ~70–500 ms; measured median 266–484 ms and p95 825–1468 ms across our runs, with single-run maxima of ~1.5–5 s depending on network load). Every answer carries a calibrated confidence and probabilities; the result also reports model, latency, token usage and estimated cost. | You need fast, repeatable **verdicts** instead of prose: classification/labeling, routing or triage, priority/severity/satisfaction scoring, spam/toxicity/PII checks, intent or truth checks, extracting structured tags. Batch related judgments into one call — parallel, no extra latency. |
 | `jev_choose` | Ranks 2–10 candidate options/approaches: each gets a fit score 0–3 and a risk noul, combined into a composite `fit/3 × (1−risk)`; returns an ordered table, a recommended pick, and per-option latency/cost. | Several independent approaches are on the table at a fork and you want a calibrated tiebreaker before deciding. Jev scores, it never explains — the reasoning stays yours. |
+| `jev_batch` | Runs **one set** of 1–5 judgments over 1–20 texts: one real call per text (4-way concurrency by default, 6 max), returning a paste-ready markdown table sortable by a judged dimension; built-in `sentiment` / `priority` / `intent` / `pii` / `spam` presets, or your own questions in the `jev_decision` shape. | A batch of tickets/comments/logs/feedback needs labeling, classification, prioritization or PII/spam screening, or several candidates need ranking on one dimension — the tool for "many texts, same judgments"; never hand-roll one `jev_decision` per item. Each text is its own real call, and a failed row says 失败 with the raw error instead of guessing. |
 | `jev_verify` | Runs the frozen 27-question labeled benchmark (urgency, spam, toxicity, personal data, routing, intent, search type, priority, severity, satisfaction, guard verdicts) against the **live** API at concurrency 6 (measured 4.96 s wall for all 27 calls in 0.7.5 and 3.999 s on a re-run, versus 10.1 s serial): accuracy overall and on the high-confidence subset, median/p95/min/max latency, calibration, tokens, cost, and every mislabeled case (total plus the high-confidence ones). | Endpoint health check, model-version comparison, or a regression check — never routinely: one run is 27 real API calls (~8.7K input tokens, ≈$0.0004). |
 | `jev_guard_status` | Read-only audit of the auto-guard: deterministic rules and the Jev backstop counted separately (`checks` / `jevCalls` / `denied` / `deterministicDenied` / `auditCalls`), guarded tool names, `denyThreshold`, loop-check counts, remaining session budget. | Confirm the guard is armed, see how often it actually fired, or explain why a command was blocked. When the guard is off it says so instead of reporting zeros. |
 | `jev_overview` | Read-only snapshot of this session's Jev ledger: recent decisions and choices with confidence, latency median & p95, question-type mix, guard events, cumulative tokens and cost, plus key/guard/threshold status. | The user asks what Jev has done, blocked or spent — or you need endpoint and budget state without restarting the session. The ledger starts at plugin-instance lifetime; guard counts live in `jev_guard_status`. |
@@ -40,6 +41,16 @@ ledger and auditable via `jev_guard_status`.
 - `jev_verify` refuses to report numbers it did not measure;
 - the benchmark CLI (`bench/bench.mjs`) is dependency-free and reproducible with any key.
 
+## What's new in 0.8.5
+
+"Remaining" finally has an honest source — the balance you declare, minus locally measured spend — instead of a number something made up.
+
+- **A restart no longer zeroes the total.** `quota.persist` now defaults to **true**: the ledger is written to `$DSH_HOME/jev-usage.json`, falling back to `~/.dsh/jev-usage.json` when the host leaves `DSH_HOME` empty (that missing fallback was the root cause of the cumulative total always reading 0).
+- **Remaining = declared − measured.** TypeSafe exposes no balance endpoint at all (`/v1/usage`, `/v1/quota`, `/v1/account`, `/v1/balance`, `/v1/credits`, `/v1/billing`, `/v1/me`, `/v1/limits`, `/v1/wallet`, even `/v1/openapi.json` all 404, and `/v1/models` carries no quota/credit headers), so the provider side cannot be read. Set `quota.declaredBalanceUsd` and `quota.balanceSince` (e.g. `2026-10-01`) and the panel prints `剩余 = 自报 $5.00 - 本机实测 $0.000004（2026-10-01 起）`; leave them empty and it says the balance was not declared rather than guessing one.
+- **The pill re-reads every 20 s** (was 60 s), so a call you just made shows up while you are still looking at it.
+- **The collapsed pill leads with 剩余** once a balance is declared (`Jev · 剩余 $4.9997 · 今日 3 次`), and the popover renames the cumulative row when the ledger is on disk.
+- **New `jev_batch` — one call, one set of judgments, over a batch of texts, returned as a table.** 1–20 items × 1–5 questions, one real Jev call per item (4-way concurrency by default, 6 max), returning a paste-ready markdown table; `sort=auto|desc|asc|none` orders rows by a judged dimension (`auto` only when the single question is a score, descending). Built-in `sentiment` / `priority` / `intent` / `pii` / `spam` presets, or your own questions in the `jev_decision` shape. A failed row is marked 失败 with the raw error — never guessed — and every row is metered separately (`kind: "batch"`), so N items really are N calls and N costs.
+- The settings card gained the two declaration fields; `npm test` is 37/37 (the new `test/batch.test.mjs` adds 7 cases: one real call per item with measured cost, the three sort modes, an unguessed failed row, a whole-batch failure that throws, preset expansion with the shared context prefix, 11 rejected argument shapes that spend no call, and the concurrency cap).
 ## What's new in 0.8.4
 
 The panel stops implying a quota that does not exist, the guard's own Jev calls
@@ -187,9 +198,10 @@ tool view, in the overview card, and on the standalone board.
 - **Optional hard stop (`quota.enforce`).** With `enabled` + `enforce`, a call
   that would cross a configured limit is refused *before* the API request, with
   a message naming the budget. Display-only by default.
-- **Persistence is opt-in.** In-memory by default (400 samples); set
-  `quota.persist: true` to keep up to `quota.historyDays` (default 30) of daily
-  history in `$DSH_HOME/jev-usage.json` (atomic tmp+rename, fail-open).
+- **Persistence (on by default since 0.8.5; opt-in in 0.8.0–0.8.4).** 0.8.0–0.8.4 kept
+  everything in memory (400 samples) unless you set `quota.persist: true`; since 0.8.5 up to
+  `quota.historyDays` (default 30) of daily history is written to `$DSH_HOME/jev-usage.json`
+  by default (atomic tmp+rename, fail-open), so the cumulative total survives a restart.
 - **Surfaced everywhere.** `jev_overview` gained a usage block, the standalone
   board (`dashboard.enabled`) gained a quota section with bars, projections and
   a 30-day sparkline, the settings card gained a "usage/quota" group, and
@@ -576,8 +588,10 @@ passed 19/19 at that time (29/29 today).
 | `quota.dailyCallLimit` | 0 | local daily call budget (0 = no limit) |
 | `quota.dailyCostLimitUsd` | 0 | local daily cost budget in USD (0 = no limit) |
 | `quota.sessionCallLimit` | 0 | local per-session call budget (0 = no limit) |
-| `quota.persist` | false | keep daily history in `$DSH_HOME/jev-usage.json` |
+| `quota.persist` | true | keep daily history in `$DSH_HOME/jev-usage.json` (on by default since 0.8.5) |
 | `quota.historyDays` | 30 | days of daily history retained (1–365) |
+| `quota.declaredBalanceUsd` | 0 | your declared balance in USD, used for remaining = declared − measured |
+| `quota.balanceSince` | (empty) | first day the declared balance covers, `YYYY-MM-DD`; empty = all recorded history |
 
 ## Related projects
 

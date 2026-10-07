@@ -236,4 +236,34 @@ assert.ok(/供应商余额/.test(usageView), "honesty note kept");
 assert.ok(/近 3 天每日调用/.test(usageView), "history sparkline rendered");
 assert.ok(usageView.includes("jev_decision ×168"), "per-tool breakdown rendered");
 
-console.log("PASS: toolview renders running / settled / error states — and every presentationMeta kind (decision/overview/guard/verify/choose/usage) with real data");
+// ---- jev_batch kind --------------------------------------------------------
+const batchEntry = entries.find((e) => e.opts.key === "jev_batch");
+assert.ok(batchEntry, "jev_batch toolview registered");
+const batchView = renderToStaticMarkup(React.createElement(batchEntry.Comp, {
+  toolName: "jev_batch", __forceOpen: true,
+  block: {
+    kind: "tool-result", callId: "c8", call: { name: "jev_batch", argsRaw: JSON.stringify({ items: ["a", "b"], preset: "pii" }) },
+    content: [{ type: "text", text: "jev_batch | model=jev-1.13.0 | 2 条 x 2 问" }], isError: false, subCalls: [],
+    meta: {
+      kind: "batch", model: "jev-1.13.0", itemCount: 2, questionCount: 2, failed: 1,
+      latencyMs: 640, estimatedCostUs: 0.000084, inputTokens: 2000, outputTokens: 20,
+      endpoint: "https://api.typesafe.ai/v1",
+      columns: [{ name: "has_personal_data", type: "noul" }, { name: "has_secret", type: "noul" }],
+      rows: [
+        { index: 0, label: "call me on 138", cells: ["90%", "10%"], latencyMs: 300, error: null },
+        { index: 1, label: "BOOM", cells: ["失败", "失败"], latencyMs: 0, error: "HTTP 500: boom" },
+      ],
+    },
+  },
+}));
+assert.ok(/Jev 批量判定/.test(batchView), "batch title");
+assert.ok(/2 条 x 2 问/.test(batchView) && /1 条失败/.test(batchView), "batch shape and failure count shown");
+assert.ok(batchView.includes("has_personal_data (noul)"), "batch column header rendered");
+assert.ok(batchView.includes("90%") && batchView.includes("call me on 138"), "batch cell and label rendered");
+assert.ok(/失败 #1 BOOM — HTTP 500: boom/.test(batchView), "failed row shows the real error");
+const batchRunning = renderToStaticMarkup(React.createElement(batchEntry.Comp, {
+  block: { callId: "c9", name: "jev_batch", argsRaw: JSON.stringify({ items: ["a", "b", "c"], preset: "spam" }), turn: 1, step: 1, time: Date.now(), subCalls: [] },
+}));
+assert.ok(/Jev 批量判定中/.test(batchRunning), "batch running label");
+
+console.log("PASS: toolview renders running / settled / error states — and every presentationMeta kind (decision/overview/guard/verify/choose/usage/batch) with real data");

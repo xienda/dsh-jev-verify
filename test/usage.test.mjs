@@ -142,5 +142,56 @@ assert.ok(Array.isArray(view.history) && view.history.length === 30);
 assert.equal(usagePresentation(null).kind, "usage");
 console.log("PASS 8: formatters and both payload shapes are stable");
 
+// ---- 9) the only honest "remaining": declared balance minus measured spend --
+const balSnap = () => usage.snapshot({ quota: { enabled: true, declaredBalanceUsd: 5, balanceSince: "2026-09-01" } });
+const bal = balSnap().quota.balance;
+assert.equal(bal.source, "declared");
+assert.equal(bal.declaredUsd, 5);
+assert.equal(bal.since, "2026-09-01");
+assert.ok(Math.abs(bal.spendUsd - 0.0000042) < 1e-12, "spend counts only buckets on/after the declared date");
+assert.ok(Math.abs(bal.remainingUsd - (5 - 0.0000042)) < 1e-9, "remaining = declared - measured");
+const balText = formatUsage(balSnap(), "today");
+assert.match(balText, /剩余\s+\$4\.99999/);
+assert.match(balText, /自报 \$5\.00/);
+assert.match(balText, /本机实测 \$0\.000004/);
+// a malformed date is never trusted: fall back to the whole recorded history
+const badSince = usage.snapshot({ quota: { enabled: true, declaredBalanceUsd: 5, balanceSince: "yesterday" } }).quota.balance;
+assert.equal(badSince.since, null);
+assert.ok(Number.isFinite(badSince.spendUsd));
+// no declaration at all: say so, never invent a number
+const noneBalance = usage.snapshot({}).quota.balance;
+assert.equal(noneBalance.source, "none");
+assert.equal(noneBalance.remainingUsd, null);
+assert.match(formatUsage(usage.snapshot({}), "today"), /剩余：无法显示 — TypeSafe 无余额接口/);
+assert.equal(usagePresentation(balSnap()).balance.declaredUsd, 5);
+console.log("PASS 9: remaining = declared balance minus measured spend, never invented");
+
+// ---- 10) a restart must not wipe the ledger (0.8.5) ------------------------
+// Regression: syncUsageConfig() runs configure({persist:true}) on the first
+// record of a NEW process, and configure() saves immediately. Saving before
+// anything had called load() replaced the real history file with "days:{}", so
+// 累计 still read 0 after a restart even with persistence on.
+const file2 = join(tmpdir(), "jev-usage-restart-" + process.pid + ".json");
+if (existsSync(file2)) rmSync(file2);
+const first = createUsageModule({ now: () => nowMs, filePath: file2 });
+first.configure({ persist: true, historyDays: 30 });
+first.record({ kind: "decision", tool: "jev_decision", inputTokens: 900, outputTokens: 30, latencyMs: 250 });
+first.record({ kind: "triage", tool: "auto-triage", inputTokens: 1400, outputTokens: 50, latencyMs: 380 });
+// A graceful flush (a real process would also write on the next call once the throttle window passes).
+first.configure({ persist: true, historyDays: 30 });
+const second = createUsageModule({ now: () => nowMs, filePath: file2 });
+second.configure({ persist: true, historyDays: 30 });
+const restored = second.snapshot({});
+assert.equal(restored.windows.today.calls, 2, "a restart must see the persisted calls");
+assert.equal(restored.windows.today.byTool.jev_decision, 1, "the by-tool split survives a restart");
+assert.equal(restored.windows.today.byTool["auto-triage"], 1);
+assert.ok(restored.persistence.enabled === true && restored.persistence.file === file2);
+second.record({ kind: "decision", tool: "jev_decision", inputTokens: 100, outputTokens: 10, latencyMs: 120 });
+assert.equal(second.snapshot({}).windows.all.calls, 3, "new calls add to restored history");
+const onDisk = JSON.parse(readFileSync(file2, "utf8"));
+assert.equal(Object.values(onDisk.days)[0].calls, 3, "the file keeps the merged total");
+rmSync(file2, { force: true });
+console.log("PASS 10: ledger survives a restart, and configure() cannot wipe it");
+
 rmSync(file, { force: true });
 console.log("ALL USAGE TESTS PASSED");

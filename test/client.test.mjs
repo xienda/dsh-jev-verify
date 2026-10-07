@@ -374,4 +374,40 @@ console.log("PASS 5: apply is defensive on hostile hosts");
   assert.equal(clean.writes.length, 0, "a nested document needs no repair");
   console.log("PASS 7: settings writes use nested paths and legacy flat keys are repaired");
 }
+// --- PASS 8 (0.8.5): the collapsed pill leads with 剩余 when the user declared
+// a balance, and the popover derives it as 自报 - 本机实测. TypeSafe has no
+// balance endpoint, so without a declaration the pill must say so, not guess.
+{
+  const { pillFromRaw, pillLabel, PillBody } = moduleExports.__internal;
+  const build = (balance) => pillFromRaw({
+    windows: {
+      today: { calls: 3, costUs: 0.0001, inputTokens: 100, outputTokens: 20, guards: { denied: 0, advised: 0 } },
+      all: { calls: 9, costUs: 0.0003 },
+      session: { calls: 3, since: "2026-10-06T11:00:00.000Z" },
+    },
+    quota: Object.assign({
+      enabled: true, enforce: false, status: "ok", resetInMs: 0, budgetConfigured: false,
+      limits: { dailyCalls: null, dailyCostUsd: null, sessionCalls: null },
+      used: { dailyCalls: 3, dailyCostUsd: 0.0001, sessionCalls: 3 }, percent: {},
+    }, balance ? { balance } : {}),
+    persistence: { enabled: true, file: "C:/Users/x/.dsh/jev-usage.json" },
+  });
+  const declared = build({ declaredUsd: 5, since: "2026-10-01", spendUsd: 0.0003, remainingUsd: 4.9997, source: "declared" });
+  assert.equal(declared.balance.declaredUsd, 5);
+  assert.equal(pillLabel(declared), "Jev · 剩余 $4.9997 · 今日 3 次", "剩余 leads the collapsed pill");
+  const withBal = textOf(render(PillBody({ pill: declared, at: 0, busy: false, onRefresh: () => {} }))).join(" | ");
+  assert.match(withBal, /剩余/);
+  assert.match(withBal, /\$4\.9997/);
+  assert.match(withBal, /自报 \$5\.00/);
+  assert.match(withBal, /累计（本机实测）/, "a persistent ledger is named honestly");
+  assert.doesNotMatch(withBal, /未自报余额/);
+  const none = build(null);
+  assert.equal(none.balance, null);
+  assert.equal(pillLabel(none), "Jev · 今日 $0.000100 · 3 次");
+  const noBal = textOf(render(PillBody({ pill: none, at: 0, busy: false, onRefresh: () => {} }))).join(" | ");
+  assert.match(noBal, /未自报余额/);
+  assert.match(noBal, /TypeSafe 无余额接口/);
+  assert.match(noBal, /累计（本机实测）/);
+  console.log("PASS 8: remaining is the declared balance minus locally measured spend");
+}
 console.log("ALL CLIENT TESTS PASSED");

@@ -8,6 +8,7 @@ Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 A
 | --- | --- | --- |
 | `jev_decision` | 对 `state` **一次调用并行**提出最多 25 个类型化问题（`choice` / `score` / `noul`），官方宣称 ~70–500 ms，我们实测中位 266–484 ms、p95 825–1468 ms。每个答案都带校准置信度与概率分布；结果同时报告模型、延迟、token 用量与估算成本。 | 你需要快速、可复现的**判定**而非文本：分类/打标、路由或分诊、优先级/严重度/满意度评分、垃圾/毒性/隐私数据检查、意图或真伪判断、从自由文本抽取结构化标签。相关问题务必合并到一次调用——并行执行不额外增加延迟。 |
 | `jev_choose` | 对 2–10 个候选方案/路线排名：每方案给契合度 score 0–3 与风险 noul，合成 `fit/3 × (1−risk)`；返回有序排名表、推荐项与每方案延迟/成本。 | 岔路口上有多条**彼此独立**的可行路线、需要一份校准过的量化参考再做最终决策时。Jev 只给分、绝不解释——理由由你自己给出。 |
+| `jev_batch` | 对 1–20 条文本跑**同一组** 1–5 个判定：每条文本一次真实调用（默认 4 路并发、上限 6），直接返回可粘贴的 markdown 表格，可按某个判定维度排序；内置 `sentiment` / `priority` / `intent` / `pii` / `spam` 预设，也可自写 questions（与 `jev_decision` 同形）。 | 一批工单/评论/日志/反馈要打标、分类、排优先级、过 PII 或垃圾内容，或按同一维度给多条候选排序时——「多条文本 + 同一组判定」的首选，不要逐条手搓 `jev_decision`。每条文本是独立一次调用，失败行标「失败」并附原文错误，绝不猜测。 |
 | `jev_verify` | 对**线上真实 API** 以 6 路并发运行冻结的 27 题带标签基准（紧迫度、垃圾、毒性、隐私数据、部门路由、意图、检索类型、优先级、严重度、满意度、护栏判定；0.7.5 实测 27 次调用墙钟 4.96 s（复测 3.999 s），串行需 10.1 s）：总体准确率与高置信子集准确率、中位/p95/min/max 延迟、置信校准、token、成本，以及**全部**误判清单（并单列其中属于高置信误判的）。 | 确认端点健康、对比模型版本、排查回归——不要例行调用：一轮就是 27 次真实 API 调用（约 8.7K input tokens、≈$0.0004）。 |
 | `jev_guard_status` | 自动护栏只读审计：确定性规则与 Jev 兜底**分别计数**（`checks` / `jevCalls` / `denied` / `deterministicDenied` / `auditCalls`）、受护栏工具名、`denyThreshold`、循环检测计数、本会话剩余预算。 | 确认护栏是否武装、实际触发过几次，或解释某条命令为什么被拦。护栏关闭时会如实说明，而不是报一堆 0。 |
 | `jev_overview` | 本会话 Jev 账本只读快照：最近判定与择案（含置信度）、延迟中位与 p95、问题类型分布、护栏事件、累计 tokens 与成本，以及 Key/护栏/阈值状态。 | 用户问「Jev 做了什么 / 拦了什么 / 花了多少」，或需要不重启会话就核对端点与预算状态时。账本以插件实例生命周期为起点；护栏计数在 `jev_guard_status`。 |
@@ -22,6 +23,17 @@ Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 A
 - `jev_verify` 拒绝报告任何未经实测的数字；
 - 独立的基准 CLI（`bench/bench.mjs`）零依赖，任何人可用任意 Key 复现发布的数据。
 
+## 0.8.5 更新
+
+「剩余」终于有了诚实的来源：你自报的余额，减去本机实测花费——而不是编造出来的数字。
+
+- **重启不再清零。** `quota.persist` 默认改为 **true**：账本写入 `$DSH_HOME/jev-usage.json`，宿主没给 `DSH_HOME` 时回退 `~/.dsh/jev-usage.json`（回退缺失正是「重启后累计一直是 0」的根因）。想回到纯内存，设 `quota.persist: false`。
+- **剩余余额 = 自报 − 本机实测。** TypeSafe 没有任何余额接口（`/v1/usage`、`/v1/quota`、`/v1/account`、`/v1/balance`、`/v1/credits`、`/v1/billing`、`/v1/me`、`/v1/limits`、`/v1/wallet`、连 `/v1/openapi.json` 都 404；`/v1/models` 的响应头里也没有任何 quota/credit 字段），所以供应商侧余额无法读取。填了 `quota.declaredBalanceUsd`（自报余额）与 `quota.balanceSince`（起始日，如 `2026-10-01`）后，面板写 `剩余 = 自报 $5.00 - 本机实测 $0.000004（2026-10-01 起）`；不填就明确写「未自报余额」，绝不给一个猜出来的数字。
+- **胶囊 20 秒一刷**（原 60 秒）：刚跑完一次判定时胶囊看起来还停在 0，像是坏了。
+- **折叠标签优先显示剩余。** 自报余额后胶囊折叠态变成 `Jev · 剩余 $4.9997 · 今日 3 次`；账本落盘时弹层里的「累计（本插件实例）」改称「累计（本机实测）」。
+- 设置卡新增「自报余额」与「自报余额起始日」两项；`quota.persist` 提示改为「默认开启，重启后累计不归零」。
+- **新增 `jev_batch`——一次调用给一批文本做同一组判定，直接产出表格。** 1–20 条文本 × 1–5 个问题，每条文本一次真实调用（默认 4 路并发、上限 6），返回可粘贴的 markdown 表格；`sort=auto|desc|asc|none` 可按某个判定维度排序（`auto` 只在唯一 score 问时降序）；内置 `sentiment` / `priority` / `intent` / `pii` / `spam` 预设，也可自写 questions（与 `jev_decision` 同形）。失败的行在表里标「失败」并附原文错误，绝不猜测；每一行单独进账本（`kind: "batch"`），所以 N 条就是 N 次调用、N 次成本。多条文本同一组判定就用它，不要逐条手搓 `jev_decision`。
+- 测试：`npm test` 37/37（新增 `test/batch.test.mjs` 7 组断言：逐条真实调用与实测成本、score 排序三态、失败行不猜测、全失败即抛错、preset 展开与 context 前缀、11 组参数校验零调用、并发上限；另有 `test/usage.test.mjs` 余额用例、`test/client.test.mjs` 胶囊余额渲染用例、`test/dashboard.test.mjs` 状态页与载荷断言、`test/toolview.test.mjs` 批量卡片断言）。客户端刷新页面即生效；服务端改动需重启宿主。
 ## 0.8.4 更新
 
 面板不再暗示不存在的额度；护栏自己的 Jev 判定终于进账本；插件开始自己出手。
@@ -74,7 +86,7 @@ Jev 不生成文本：给定 `state` 与类型化问题，它用**一次并行 A
 - **`jev_usage`——可直接调用的额度面板。** 每次判定、择案、自检与护栏事件都会本地记账，附实测 input tokens、成本、延迟、问题类型分布与工具名。工具返回滚动窗口（今日 / 7 天 / 30 天 / 全部 / 本会话）、每日调用与成本序列、按当前速率推算的「照这个速度还有 N 小时触顶」预测，以及可选的硬性停止。
 - **只报本地预算，不编造供应商余额。** TypeSafe 没有余额或额度接口（`GET /v1/usage`、`/v1/quota`、`/v1/account`、`/v1/balance`、`/v1/credits`、`/v1/limits`、`/v1/billing` 全部 404，只有 `/v1/models` 有响应）。因此面板只报本机实测用量，对照你自己设的上限：`quota.dailyCallLimit`、`quota.dailyCostLimitUsd`、`quota.sessionCallLimit` 与 `warnAtPercent`。这条边界同时印在文本结果与卡片上——绝不编造余额。
 - **可选硬停（`quota.enforce`）。** 在 `enabled` + `enforce` 下，会越过所设上限的调用在发起 API 请求**之前**就被拒绝，并说明触顶的是哪条预算；默认只展示、不拦截。
-- **持久化默认关闭。** 默认只存内存（400 条样本）；设 `quota.persist: true` 可把最多 `quota.historyDays`（默认 30）天的每日历史写入 `$DSH_HOME/jev-usage.json`（临时文件 + rename，失败放行、不影响判定）。
+- **持久化（0.8.5 起默认开启，此前默认关闭）。** 0.8.0–0.8.4 默认只存内存（400 条样本），需设 `quota.persist: true` 才把最多 `quota.historyDays`（默认 30）天的每日历史写入 `$DSH_HOME/jev-usage.json`（临时文件 + rename，失败放行、不影响判定）；0.8.5 起默认写盘，重启后累计不再归零。
 - **三处都可见。** `jev_overview` 增加额度区块；独立看板（`dashboard.enabled`）增加额度区（进度条、预测与 30 天走势图）；设置卡增加「使用额度」组；`jev_verify` 现在也会记录 27 次调用、tokens 与成本，而不只是准确率文本。
 - **测试 28 项全绿**——新增 `test/usage.test.mjs` 覆盖空态、token 记账、批量调用、额度状态与硬停、跨天持久化与裁剪、重载、重置以及全部格式化函数。
 
@@ -300,8 +312,10 @@ TYPESAFE_API_KEY=... node bench/bench.mjs --repeat 3 # 延迟稳定性
 | `quota.dailyCallLimit` | 0 | 本地每日调用上限（0 = 不限） |
 | `quota.dailyCostLimitUsd` | 0 | 本地每日成本上限（美元，0 = 不限） |
 | `quota.sessionCallLimit` | 0 | 本地本会话调用上限（0 = 不限） |
-| `quota.persist` | false | 是否把每日历史写入 `$DSH_HOME/jev-usage.json` |
+| `quota.persist` | true | 是否把每日历史写入 `$DSH_HOME/jev-usage.json`（0.8.5 起默认开启） |
 | `quota.historyDays` | 30 | 保留的每日历史天数（1–365） |
+| `quota.declaredBalanceUsd` | 0 | 自报余额（美元），用于算「剩余 = 自报 − 本机实测」 |
+| `quota.balanceSince` | （空） | 自报余额的起始日 `YYYY-MM-DD`；留空表示全部已记录历史 |
 
 ## 相关项目
 

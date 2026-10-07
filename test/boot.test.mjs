@@ -1,6 +1,6 @@
 /**
  * BOOT-STABILITY test: apply() must NEVER throw, for every config shape, and
- * must register the six tools plus the settings namespace. Uses the REAL
+ * must register the seven tools plus the settings namespace. Uses the REAL
  * @deepseek-ai/dsh-tools defineTool (schema DSL validation runs exactly like
  * inside a host), with fake services for everything else.
  */
@@ -87,7 +87,7 @@ for (const shape of CONFIG_SHAPES) {
   assert.equal(threw, null, "apply must not throw for config " + JSON.stringify(shape) + " -> " + String(threw));
   if (shape.enabled === false) continue;
   const names = registered.map((t) => t.name).sort();
-  assert.deepEqual(names, ["jev_choose", "jev_decision", "jev_guard_status", "jev_overview", "jev_usage", "jev_verify"], "all six tools registered for " + JSON.stringify(shape));
+  assert.deepEqual(names, ["jev_batch", "jev_choose", "jev_decision", "jev_guard_status", "jev_overview", "jev_usage", "jev_verify"], "all seven tools registered for " + JSON.stringify(shape));
   assert.ok(settingsNamespaces.includes("jev-verify"), "settings namespace registered for " + JSON.stringify(shape));
 }
 console.log("PASS 1: apply never throws across " + CONFIG_SHAPES.length + " config shapes (incl. unknown fields)");
@@ -98,7 +98,7 @@ console.log("PASS 1: apply never throws across " + CONFIG_SHAPES.length + " conf
   let threw = null;
   try { apply(ctx, { autoGuard: { enabled: true }, dashboard: { enabled: true } }); } catch (e) { threw = e; }
   assert.equal(threw, null, "no-webServer host must not throw");
-  assert.equal(registered.length, 6, "tools registered without webServer");
+  assert.equal(registered.length, 7, "tools registered without webServer");
 }
 console.log("PASS 2: hosts without webServer/settings still boot cleanly");
 
@@ -113,7 +113,7 @@ console.log("PASS 2: hosts without webServer/settings still boot cleanly");
   assert.equal(g.order, 3000, "default guidance order");
   const text = g.text({ scope: {} });
   assert.ok(typeof text === "string" && text.length > 300, "guidance text must be substantial");
-  for (const tool of ["jev_decision", "jev_choose", "jev_overview", "jev_guard_status", "jev_verify", "jev_usage"]) {
+  for (const tool of ["jev_decision", "jev_choose", "jev_batch", "jev_overview", "jev_guard_status", "jev_verify", "jev_usage"]) {
     assert.ok(text.includes(tool), "guidance must name " + tool);
   }
   assert.ok(text.includes("70-500ms"), "guidance carries the measured latency");

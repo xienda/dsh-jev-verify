@@ -9,6 +9,7 @@
  *   2. The web half was mounted only while dashboard.enabled was true, which
  *      ALSO took the always-on composer pill offline.
  */
+import "./_isolate.mjs";
 import { EventEmitter } from "node:events";
 import assert from "node:assert/strict";
 import { createDashboardModule, normalizeBasePath, PILL_ROUTE } from "../lib/dashboard.js";
@@ -198,6 +199,27 @@ console.log("PASS 7: base path normalization");
   assert.deepEqual(pill.byTool, { jev_verify: 27, jev_decision: 1, jev_choose: 1 });
   assert.deepEqual(pill.history, [ { day: "2026-10-05", calls: 8 }, { day: "2026-10-06", calls: 29 } ]);
   assert.ok(!("roll" in pill), "the pill never ships the decision roll");
+  assert.equal(pill.balance, null, "no declared balance → null, never a guessed number");
+  // 0.8.5: a declared balance and the on-disk ledger both ride the pill; the
+  // status page derives 剩余 = 自报 - 本机实测 instead of implying a provider one.
+  const balRoutes = [];
+  const balMod = createDashboardModule({ requestSystemOne: mockRso });
+  const balSnap = () => Object.assign(sampleSnapshot(), {
+    persistence: { enabled: true, file: "C:/Users/x/.dsh/jev-usage.json" },
+    quota: Object.assign(sampleSnapshot().quota, {
+      balance: { declaredUsd: 5, since: "2026-10-01", spendUsd: 0.0003, remainingUsd: 4.9997, source: "declared" },
+    }),
+  });
+  balMod.registerRoutes({ webServer: { register: (r) => balRoutes.push(r) } }, { dashboard: { enabled: false } }, () => ({}), () => ({ usage: balSnap() }));
+  const balPillRes = fakeRes();
+  await balRoutes.find((r) => r.path === PILL_ROUTE).handler({ method: "GET" }, balPillRes);
+  const balPill = JSON.parse(balPillRes.body);
+  assert.equal(balPill.balance.remainingUsd, 4.9997, "the declared balance reaches the pill");
+  assert.equal(balPill.persistence.enabled, true);
+  const balPageRes = fakeRes();
+  await balRoutes[0].handler({ method: "GET" }, balPageRes);
+  assert.match(balPageRes.body, /剩余（自报余额 - 本机实测）/, "the status page shows the derived remaining");
+  assert.doesNotMatch(balPageRes.body, /额度状态/);
   console.log("PASS 8: pill route projects a compact JSON payload");
 }
 

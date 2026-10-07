@@ -136,6 +136,8 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     ".djev-pillLead span{color:var(--dsw-alias-label-secondary)}",
     ".djev-pillLead b{color:var(--dsw-alias-label-primary);font-weight:600;font-size:12px}",
     ".djev-pillRow b{color:var(--dsw-alias-label-secondary);font-weight:500}",
+    ".djev-pillMuted span,.djev-pillMuted b{color:var(--dsw-alias-label-tertiary);font-weight:400}",
+    ".djev-pillSpent b{color:var(--dsw-alias-label-error,#c62828)}",
     ".djev-pillFoot{margin-top:9px;display:flex;justify-content:space-between;align-items:center;gap:8px;color:var(--dsw-alias-label-tertiary);font-size:10px}",
     ".djev-pillBtn{border:.5px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-secondary);border-radius:6px;padding:1px 6px;font-size:10px;cursor:pointer}",
     ".djev-noteChoose{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}",
@@ -237,9 +239,13 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
         { path: "quota.sessionCallLimit", label: "本实例调用上限（次）", control: "text", numeric: true, min: 0, max: 1000000,
           hint: "0 = 不设限。" },
         { path: "quota.persist", label: "保存本地历史", control: "toggle",
-          hint: "写入 $DSH_HOME/jev-usage.json；默认关闭 = 仅内存，重启即归零。" },
+          hint: "默认开启：写入 $DSH_HOME/jev-usage.json，重启后累计不归零。关闭则仅内存（重启归零）。" },
         { path: "quota.historyDays", label: "历史保留天数", control: "text", numeric: true, min: 1, max: 365,
-          hint: "默认 30 天（persist 开启时生效）。" },
+          hint: "默认 30 天。" },
+        { path: "quota.declaredBalanceUsd", label: "自报余额（美元，用于算剩余）", control: "text", numeric: true, min: 0, max: 100000,
+          hint: "TypeSafe 没有余额接口，插件读不到账户余额。填你在控制台充值的金额，面板就显示 剩余 = 该金额 - 本机实测花费；0 = 不显示剩余。" },
+        { path: "quota.balanceSince", label: "自报余额起始日（YYYY-MM-DD）", control: "text",
+          hint: "只统计该日期起的本机花费；留空 = 全部已记录历史。" },
       ],
     },
   ];
@@ -940,6 +946,9 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
         h("span", { className: "djev-chip " + (m.enforce ? "djev-chipWarn" : "") },
           m.enforce ? "超额即停止调用" : "仅展示（不拦截）")),
       h("div", { className: "djev-stats" },
+        m.balance && m.balance.declaredUsd
+          ? h(Stat, { key: "rem", value: money(Math.max(0, m.balance.remainingUsd)), label: "剩余（自报 $" + Number(m.balance.declaredUsd).toFixed(2) + " - 实测）" })
+          : null,
         h(Stat, { key: "dc", value: String(used.dailyCalls || 0), label: "今日调用" + (lim.dailyCalls == null ? "" : " / " + lim.dailyCalls) }),
         h(Stat, { key: "dcc", value: money(used.dailyCostUsd), label: "今日成本" + (lim.dailyCostUsd == null ? "" : " / " + money(lim.dailyCostUsd)) }),
         h(Stat, { key: "sc", value: String(used.sessionCalls || 0), label: "本实例调用" + (lim.sessionCalls == null ? "" : " / " + lim.sessionCalls) }),
@@ -1027,7 +1036,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
 
     var dot = running ? " djev-tvDotRun" : isError ? " djev-tvDotErr" : " djev-tvDotOk";
     var label = running
-      ? (toolName === "jev_choose" ? "Jev 方案选型中…" : toolName === "jev_verify" ? "Jev 实测中…" : toolName === "jev_overview" ? "读取 Jev 总览…"
+      ? (toolName === "jev_batch" ? "Jev 批量判定中…" : toolName === "jev_choose" ? "Jev 方案选型中…" : toolName === "jev_verify" ? "Jev 实测中…" : toolName === "jev_overview" ? "读取 Jev 总览…"
         : toolName === "jev_guard_status" ? "读取护栏状态…" : toolName === "jev_usage" ? "读取 Jev 额度…" : "Jev 判定中…")
       : isError ? "Jev 调用失败"
       : kind === "overview" ? "Jev 调用总览"
@@ -1035,6 +1044,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       : kind === "verify" ? "Jev 实测验证"
       : kind === "usage" ? "Jev 使用额度"
       : kind === "choose" ? "Jev 方案选型"
+      : kind === "batch" ? "Jev 批量判定"
       : "Jev 判定完成";
 
     // Header chips: the numbers that matter for this kind of call.
@@ -1059,6 +1069,15 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       if (typeof ms2 === "number") chips.push(Math.round(ms2) + " ms");
       if (typeof cost2 === "number") chips.push("$" + cost2.toFixed(6));
       if (model2) chips.push(String(model2));
+    } else if (kind === "batch") {
+      var bMs = view ? view.latencyMs : payload && payload.latencyMs;
+      var bCost = view ? view.estimatedCostUs : payload && payload.estimatedCostUs;
+      var bModel = view ? view.model : payload && payload.model;
+      if (view && view.itemCount) chips.push(view.itemCount + " 条 x " + (view.questionCount || 0) + " 问");
+      if (view && view.failed) chips.push(view.failed + " 条失败");
+      if (typeof bMs === "number") chips.push(Math.round(bMs) + " ms");
+      if (typeof bCost === "number") chips.push("$" + bCost.toFixed(6));
+      if (bModel) chips.push(String(bModel));
     } else if (kind === "overview") {
       chips.push(sum.calls + " 次判定");
       if (sum.guardDenials) chips.push(sum.guardDenials + " 次拦截");
@@ -1137,6 +1156,40 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
         !running && !isError && kind === "decision" ? h(DecisionBody, { answers: answers }) : null,
         !running && !isError && kind === "choose" ? h(ChooseBody, { meta: view }) : null,
 
+        // 0.8.5 jev_batch: show the actual table the tool produced. The model
+        // gets the markdown, but a batch is the one result a human wants to
+        // scan — and a failed row must be visible as failed, not blank.
+        !running && !isError && kind === "batch" && view && Array.isArray(view.columns)
+          ? h("div", null,
+              h("p", { className: "djev-ansWhy" },
+                view.itemCount + " 条 x " + view.questionCount + " 问"
+                  + (view.failed ? "（" + view.failed + " 条失败）" : "")
+                  + (view.endpoint ? " · " + view.endpoint : "")),
+              h("table", { style: { borderCollapse: "collapse", width: "100%", fontSize: "12px" } },
+                h("thead", null,
+                  h("tr", null,
+                    h("th", { style: { textAlign: "left", padding: "4px 6px", borderBottom: "1px solid var(--dsh-border, #ddd)" } }, "#"),
+                    h("th", { style: { textAlign: "left", padding: "4px 6px", borderBottom: "1px solid var(--dsh-border, #ddd)" } }, "文本"),
+                    view.columns.map(function (c, i) {
+                      return h("th", { key: "c" + i, style: { textAlign: "left", padding: "4px 6px", borderBottom: "1px solid var(--dsh-border, #ddd)" } },
+                        c.name + " (" + c.type + ")");
+                    }))),
+                h("tbody", null, view.rows.map(function (row, i) {
+                  return h("tr", { key: "r" + i },
+                    h("td", { style: { padding: "4px 6px", opacity: 0.6 } }, String(row.index)),
+                    h("td", { style: { padding: "4px 6px" }, title: row.label },
+                      row.label.length > 40 ? row.label.slice(0, 40) + "…" : row.label),
+                    (row.cells || []).map(function (cell, j) {
+                      return h("td", { key: "v" + j, style: { padding: "4px 6px", color: cell === "失败" ? "#c0392b" : "inherit" } }, cell);
+                    }));
+                }))),
+              view.failed
+                ? h("div", null, view.rows.filter(function (r) { return r.error; }).map(function (r, i) {
+                    return h("p", { key: "e" + i, className: "djev-tvState" }, "失败 #" + r.index + " " + r.label + " — " + r.error);
+                  }))
+                : null)
+          : null,
+
         !running && !isError && kind === "decision" && answerNames.length === 0 && questions.length > 0
           ? h("div", null, questions.map(function (q, i) {
               return h("p", { key: i, className: "djev-ansWhy" },
@@ -1195,7 +1248,9 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
 
   /** Route candidates, tried in order; the second is the full dashboard API. */
   var PILL_ROUTES = ["/jev/api/usage", "/jev/api"];
-  var PILL_REFRESH_MS = 60000;
+  // 0.8.5: 20s (was 60s) so a fresh call shows up in the pill while the user is
+  // still looking at it — the 60s tick looked like a broken counter.
+  var PILL_REFRESH_MS = 20000;
 
   var EMPTY_PILL_STATE = { pill: null, error: "", at: 0, open: false, busy: false };
 
@@ -1228,6 +1283,8 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       limits: q.limits || {},
       used: q.used || {},
       percent: q.percent || {},
+      balance: q.balance || null,
+      persistence: snap.persistence || null,
       projection: q.projection || null,
       today: {
         calls: today.calls || 0,
@@ -1281,6 +1338,12 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       var cost = Number(today.costUs) || 0;
       // Money first: TypeSafe bills per call, so the cost is the number a user
       // actually wants in the collapsed pill.
+      // 0.8.5: a declared balance makes "剩余" the number worth the pixels.
+      var bal = pill.balance;
+      if (bal && Number(bal.declaredUsd) > 0) {
+        var rem = Number(bal.remainingUsd) || 0;
+        return "Jev · 剩余 " + (rem > 0 ? pillMoney(rem) : "$0") + " · 今日 " + calls + " 次";
+      }
       if (cost > 0) return "Jev · 今日 " + pillMoney(cost) + " · " + calls + " 次";
       return "Jev · 今日 " + calls + " 次";
     } catch (e) {
@@ -1340,12 +1403,30 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
     var hasBudget = pillHasBudget({ limits: limits, budgetConfigured: pill.budgetConfigured });
     var all = pill.all || {};
     // Money first: TypeSafe bills per call, so cost leads; call counts follow.
-    rows.push(h("div", { className: "djev-pillRow djev-pillLead", key: "cost" },
+    var bal = pill.balance || null;
+    var hasBalance = !!(bal && Number(bal.declaredUsd) > 0);
+    // Money first: with a declared top-up the remaining money leads, otherwise
+    // today's measured cost does. Never a percentage of a budget that is not set.
+    if (hasBalance) {
+      var rem = Number(bal.remainingUsd) || 0;
+      rows.push(h("div", { className: "djev-pillRow djev-pillLead" + (rem <= 0 ? " djev-pillSpent" : ""), key: "rem" },
+        h("span", null, rem <= 0 ? "剩余（已用尽）" : "剩余"),
+        h("b", null, pillMoney(Math.max(0, rem)))));
+      rows.push(h("div", { className: "djev-pillRow", key: "balsrc" },
+        h("span", null, "自报 $" + Number(bal.declaredUsd).toFixed(2) + " - 本机实测" + (bal.since ? "（" + bal.since + " 起）" : "")),
+        h("b", null, pillMoney(Number(bal.spendUsd) || 0))));
+    }
+    rows.push(h("div", { className: "djev-pillRow" + (hasBalance ? "" : " djev-pillLead"), key: "cost" },
       h("span", null, "今日成本"),
       h("b", null, pillMoney(Number(today.costUs) || 0))));
     rows.push(h("div", { className: "djev-pillRow", key: "all" },
-      h("span", null, "累计（本插件实例）"),
+      h("span", null, pill.persistence && pill.persistence.enabled ? "累计（本机实测）" : "累计（本插件实例）"),
       h("b", null, pillMoney(Number(all.costUs) || 0) + " · " + (Number(all.calls) || 0) + " 次")));
+    if (!hasBalance) {
+      rows.push(h("div", { className: "djev-pillRow djev-pillMuted", key: "remnone" },
+        h("span", null, "剩余"),
+        h("b", null, "未自报余额（TypeSafe 无余额接口）")));
+    }
     if (!hasBudget) {
       rows.push(h("div", { className: "djev-pillRow", key: "calls" },
         h("span", null, "今日调用"),
@@ -1382,7 +1463,9 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
       h("div", { className: "djev-pillPopSub", key: "sub" },
         hasBudget
           ? (pill.enforce === true ? "本地自设预算，触顶会拦截新的 Jev 调用。" : "本地自设预算，触顶只告警，不拦截调用。")
-          : "直连 TypeSafe 按量计费，本机未设任何上限，只报本机实测用量。TypeSafe 没有余额接口。"),
+          : (hasBalance
+            ? "剩余 = 你自报的余额 - 本机实测花费（本机账本，非供应商余额；TypeSafe 没有余额接口，数字不会自动更新）。"
+            : "直连 TypeSafe 按量计费，本机未设任何上限，只报本机实测用量。TypeSafe 没有余额接口，剩余需在设置里填「自报余额」。")),
     ];
     if (hasBudget) {
       children.push(pillMeter("今日调用（本地自设上限）", (Number(used.dailyCalls) || 0) + (limits.dailyCalls == null ? "" : " / " + limits.dailyCalls), percent.dailyCalls));
@@ -1508,7 +1591,7 @@ window.__ModuleLoader__.load({ id: "dsh-jev-verify", factory: (require) => {
    */
   function registerToolViews(ctx) {
     ctx.slots.inject("tool.call.toolview", function* () {
-      var names = ["jev_decision", "jev_choose", "jev_overview", "jev_guard_status", "jev_verify", "jev_usage"];
+      var names = ["jev_decision", "jev_choose", "jev_batch", "jev_overview", "jev_guard_status", "jev_verify", "jev_usage"];
       for (var i = 0; i < names.length; i++) {
         yield ctx.slots.register(
           {
